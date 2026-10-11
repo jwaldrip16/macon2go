@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<style>.rgsect{margin:0 0 10px}.rghead{font-size:15px;margin:10px 0 6px;padding:4px 8px;background:#eef2f8;border-radius:6px}</style>
+<style>.rgtabs{flex-wrap:wrap;margin:4px 0 8px}.rgtabs .tab{line-height:1.25}.rgtabs .rgn{display:block;font-size:11px;opacity:.8;font-weight:400}.rgsect{margin:0 0 10px}.rghead{font-size:15px;margin:10px 0 6px;padding:4px 8px;background:#eef2f8;border-radius:6px}</style>
 <div id="flash" class="flashbar hidden">New pending order</div>
 <div class="head">
   <h1>Dispatch board</h1>
@@ -102,6 +102,7 @@
     <div class="row between"><h2>Pending <span class="muted" id="pendCount"></span></h2><label class="autoswitch"><input type="checkbox" id="autoSw" onchange="setAuto()"><span id="autoLbl">Auto dispatch</span></label>
       <a class="btn tiny" href="/dispatch/manage">Restaurants and drivers</a></div>
     <p class="muted small">Waiting on the kitchen or on a free driver. Drag a card onto a driver on the right.</p>
+    <div class="tabs rgtabs" id="rgTabs"></div>
     <div class="pendrow">
       <div id="pending" class="dropzone queuezone" ondragover="allowDrop(event)"
            ondragleave="dragLeave(event)" ondrop="dropOnQueue(event)"></div>
@@ -492,7 +493,48 @@ function setRoster(which){
   ROSTER_PICKED = true;
   document.querySelectorAll('#rosterTabs .tab').forEach(t=>
     t.classList.toggle('on', t.dataset.roster === which));
-  renderDrivers(DRIVERS);
+  renderDrivers(rgDrivers(DRIVERS));
+}
+// Region tabs: pick a region and the Pending list, the driver tabs (On shift, Scheduled,
+// Unavailable) and Active runs / Live orders all show only that region.
+let RGTAB = parseInt(localStorage.getItem('ffRgTab')||'0',10) || 0;
+let RG_LEAD = {};
+function setRgTab(id){
+  RGTAB = id || 0;
+  try { localStorage.setItem('ffRgTab', String(RGTAB)); } catch(e) {}
+  board(true);
+}
+function rgSame(a, b){ return a === b || (!!RG_LEAD[a] && RG_LEAD[a] === RG_LEAD[b]); }
+function rgCovers(d, rid){
+  const w = d.work_regions || [];
+  if (!w.length) return true;           // no region set: they can take any region
+  return w.some(x => rgSame(x, rid));
+}
+function rgDrivers(list){ return RGTAB ? (list||[]).filter(d => rgCovers(d, RGTAB)) : (list||[]); }
+function rgOrders(list){ return RGTAB ? (list||[]).filter(o => rgSame(o.region_id || 0, RGTAB)) : list; }
+function drawRgTabs(res, pending, active){
+  const box = document.getElementById('rgTabs'); if (!box) return;
+  const qs = (res.region_queues || []).filter(q => q.id);
+  RG_LEAD = {}; qs.forEach(q => { if (q.drive_lead) RG_LEAD[q.id] = q.drive_lead; });
+  const regs = qs.map(q => ({id: q.id, name: q.name}));
+  const seen = new Set(regs.map(r => r.id));
+  pending.concat(active).forEach(o => { const k = o.region_id || 0;
+    if (k && !seen.has(k)) { seen.add(k); regs.push({id: k, name: o.region_label || 'Region'}); } });
+  if (regs.length < 2){ box.innerHTML = ''; box.style.display = 'none'; RGTAB = 0; return; }
+  box.style.display = '';
+  if (RGTAB && !seen.has(RGTAB)) RGTAB = 0;
+  const onShift = d => d.status !== 'offline';
+  const cnt = rid => {
+    const p = rid ? pending.filter(o => rgSame(o.region_id || 0, rid)).length : pending.length;
+    const l = rid ? active.filter(o => rgSame(o.region_id || 0, rid)).length : active.length;
+    const dr = (res.drivers||[]).filter(d => onShift(d) && (!rid || rgCovers(d, rid))).length;
+    return p + ' pending &middot; ' + l + ' live &middot; ' + dr + ' on shift';
+  };
+  const tab = (id, name) => '<button class="tab' + (RGTAB === id ? ' on' : '') + '" onclick="setRgTab(' + id + ')">' +
+    esc(name) + '<span class="rgn">' + cnt(id) + '</span></button>';
+  const html = tab(0, 'All regions') + regs.map(r => tab(r.id, r.name)).join('');
+  // only redraw when something changed, so a click never lands on a tab that is being replaced
+  if (box._html !== html){ box.innerHTML = html; box._html = html; }
 }
 function grp(d){ return d.group || d.roster; }
 function availLine(d){
@@ -1051,7 +1093,6 @@ async function board(force){
   LIVE_ORDERS.forEach(o => { TOKENS_LAST[o.id] = o.token || ''; });
   res.drivers.sort((a,b2)=>(a.up_next||99)-(b2.up_next||99) || a.name.localeCompare(b2.name));
   window.LAST_DRIVERS = res.drivers;
-  renderDrivers(res.drivers);
   chatNotify(res);
   drawAlerts(res.alerts || []);
   if (document.getElementById('rests')) document.getElementById('rests').innerHTML = (res.restaurants||[]).map(r=>
@@ -1090,16 +1131,20 @@ async function board(force){
     !['at_restaurant','enroute'].includes(o.dispatch_status);
   res.orders.forEach(o=>{ if(offDriver(o)){ const dd=res.drivers.find(x=>x.id===o.driver_id);
     o.hold_reason = (dd?dd.name:'driver')+' is off shift, reassign'; } });
-  const pending = res.orders.filter(o=>!o.driver_id || offDriver(o));
-  const active  = res.orders.filter(o=>o.driver_id && !offDriver(o));
+  const allPending = res.orders.filter(o=>!o.driver_id || offDriver(o));
+  const allActive  = res.orders.filter(o=>o.driver_id && !offDriver(o));
+  try { drawRgTabs(res, allPending, allActive); } catch(e) { console.log('region tabs skipped', e); }
+  renderDrivers(rgDrivers(res.drivers));
+  const pending = rgOrders(allPending);
+  const active  = rgOrders(allActive);
   document.getElementById('pendCount').textContent =
     pending.length ? '(' + pending.length + ')' : '';
   document.getElementById('activeCount').textContent =
     active.length ? '(' + active.length + ' on ' + new Set(active.map(o=>o.driver_id)).size + ' driver(s))' : '';
   document.getElementById('pending').innerHTML = byRegion(pending, o=>orderCard(o,opts,res.drivers)) ||
-    '<p class="muted">Nothing pending.</p>';
+    '<p class="muted">Nothing pending' + (RGTAB ? ' in this region' : '') + '.</p>';
   document.getElementById('orders').innerHTML = byRegion(active, o=>orderCard(o,opts)) ||
-    '<p class="muted">No orders on drivers right now.</p>';
+    '<p class="muted">No orders on drivers' + (RGTAB ? ' in this region' : '') + ' right now.</p>';
   res.orders.forEach(o=>{ const s=document.getElementById('as'+o.id); if(s) s.value = o.driver_id||''; });
 
 }

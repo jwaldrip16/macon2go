@@ -6848,6 +6848,7 @@ def api_board():
         "alerts": open_call_alerts(),
         "awaiting": awaiting_accept(),
         "business_open": business_is_open(),
+        "auto_business": auto_business_on(),
         "future_count": future_count,
         "late": late_accepts(),
         "rest_chat_unread": rest_chat_unread_for_dispatch()[0],
@@ -16213,6 +16214,13 @@ def api_dispatch_business():
     if not dispatcher_required():
         return jsonify({"ok": False}), 403
     on = bool((request.get_json(silent=True) or {}).get("open"))
+    cleared = business_set(on, session.get("dispatcher_name") or "dispatch")
+    return jsonify({"ok": True, "business_open": on, "chats_cleared": cleared})
+
+
+def business_set(on, by):
+    """Open or close the business. Used by the Open Business / Close buttons and by the
+    automatic open (30 minutes before hours) and close (at closing time)."""
     if on and not business_is_open():
         db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('business_opened_at',?)", (now(),))
     db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('business_open',?)", ("1" if on else "0",))
@@ -16228,14 +16236,94 @@ def api_dispatch_business():
     # every open and every close starts chat fresh: driver chats, kitchen chats and mass texts
     cleared = purge_chats()
     db().commit()
-    log("business", ("opened" if on else "closed") + " by " + (session.get("dispatcher_name") or "dispatch")
+    log("business", ("opened" if on else "closed") + " by " + by
         + ("; cleared %d chat messages" % cleared if cleared else ""))
     try:
         if cleared:
             db().execute("VACUUM")
     except Exception:
         pass
-    return jsonify({"ok": True, "business_open": on, "chats_cleared": cleared})
+    return cleared
+
+
+# ---------------------------------------------------------------- automatic open and close
+# The business opens on its own 30 minutes before operating hours start and closes on its own
+# at closing time. It only acts when the window starts or ends, so a dispatcher who opens early,
+# closes early or stays open late keeps that until the next start or end of hours.
+AUTO_BIZ_LEAD_MIN = 30
+
+def auto_business_on():
+    v = setting("auto_business", str)
+    return str(v if v not in (None, "") else "1") == "1"
+
+def auto_business_window(when=None):
+    """True from 30 minutes before any region (or the business) opens until it closes.
+    None when no operating hours are set anywhere, so there is nothing to go by."""
+    when = when or dt.datetime.now()
+    rids = [None] + [r["id"] for r in all_regions()]
+    try:
+        hidden = board_hidden_regions()
+    except Exception:
+        hidden = set()
+    have = False
+    for rid in rids:
+        if rid and rid in hidden:
+            continue
+        if not business_hours(rid):
+            continue        # no hours set here: nothing to open or close by
+        have = True
+        if business_in_hours(when, rid) or business_in_hours(when + dt.timedelta(minutes=AUTO_BIZ_LEAD_MIN), rid):
+            return True
+    return False if have else None
+
+def auto_business_tick(when=None):
+    """Open or close when the hours window starts or ends. Returns 'opened', 'closed' or ''."""
+    if not auto_business_on():
+        return ""
+    win = auto_business_window(when)
+    if win is None:
+        return ""
+    cur = "1" if win else "0"
+    last = setting("auto_biz_window", str) or ""
+    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('auto_biz_window',?)", (cur,))
+    db().commit()
+    if last == "" or last == cur:
+        return ""           # first look, or nothing started or ended since the last look
+    if win and not business_is_open():
+        business_set(True, "automatic open (%d min before hours)" % AUTO_BIZ_LEAD_MIN)
+        return "opened"
+    if not win and business_is_open():
+        business_set(False, "automatic close (closing time)")
+        return "closed"
+    return ""
+
+def _auto_business_worker():
+    while True:
+        try:
+            with app.app_context():
+                auto_business_tick()
+        except Exception as e:
+            print("auto open/close skipped:", e)
+        time.sleep(30)
+
+if os.environ.get("AUTO_BUSINESS", "1") != "0":
+    threading.Thread(target=_auto_business_worker, daemon=True).start()
+
+
+@app.post("/api/dispatch/auto-business")
+def api_auto_business():
+    """Turn the automatic open and close on or off."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    on = bool((request.get_json(silent=True) or {}).get("on"))
+    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('auto_business',?)", ("1" if on else "0",))
+    win = auto_business_window()
+    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('auto_biz_window',?)",
+                 ("" if win is None else ("1" if win else "0"),))
+    db().commit()
+    log("business", "automatic open and close turned " + ("on" if on else "off") + " by "
+        + (session.get("dispatcher_name") or "dispatch"))
+    return jsonify({"ok": True, "auto_business": on, "has_hours": win is not None})
 
 def purge_chats():
     """Deletes every driver chat, restaurant chat and mass text. Returns how many went."""

@@ -29,6 +29,7 @@
   <span id="bizState" class="pill grey">checking...</span>
   <button class="btn tiny primary" id="bizOpenBtn" onclick="setBusiness(true)">Open Business</button>
   <button class="btn tiny" id="bizCloseBtn" onclick="setBusiness(false)">Close</button>
+  <label class="small" title="Opens the business 30 minutes before operating hours and closes it at closing time"><input type="checkbox" id="autoBiz" onchange="setAutoBiz()"> Auto open 30 min before hours, close at closing</label>
   <button class="btn tiny hidden" id="notifBtn">Turn on pop-up alerts</button><span class="muted small" id="notifNote"></span></div>
 <div class="tabbar">
   <button class="tab on" id="tabBoard" onclick="page('board')">Order board</button>
@@ -691,6 +692,13 @@ function drawBusiness(on){
   document.getElementById('bizOpenBtn').disabled = !!on;
   document.getElementById('bizCloseBtn').disabled = !on;
 }
+async function setAutoBiz(){
+  const ab = document.getElementById('autoBiz');
+  const res = await jpost('/api/dispatch/auto-business', {on: ab.checked});
+  if (!res || !res.ok){ alert('Could not save that.'); ab.checked = !ab.checked; return; }
+  if (res.auto_business && !res.has_hours)
+    alert('No operating hours are set yet. Add them under Restaurant hours so the business knows when to open and close.');
+}
 async function setBusiness(on){
   if(!on && !confirm('Close the business? Drivers will see a closed screen until you press Open Business.')) return;
   const res = await jpost('/api/dispatch/business', {open: on});
@@ -1085,6 +1093,8 @@ async function board(force){
   renderCompleted(res);
   try { drawDoneTools(res); } catch(e) { console.log(e); }
   if (res.business_open !== undefined) drawBusiness(res.business_open);
+  { const ab = document.getElementById('autoBiz');
+    if (ab && res.auto_business !== undefined && document.activeElement !== ab) ab.checked = !!res.auto_business; }
   try { futureBadge(res.future_count || 0); } catch(e) {}
   try { restChatNotify(res); } catch(e) { console.log('rest chat skipped', e); }
   try { drawLate(res.late || []); } catch(e) { console.log('late skipped', e); }

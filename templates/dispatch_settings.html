@@ -67,6 +67,8 @@ async function setLogo(inp){
   <div class="muted small">50 = 50% more points, 100 = double points, 200 = triple points. <a href="/rewards" target="_blank">See the rewards page</a> · <a href="/dispatch/reviews">Customer reviews</a></div>
   <div class="row"><label>Gift card minimum ($) <input name="gift_min" type="number" min="1" max="500" value="{{ (s.get('gift_min_cents','1000')|int)//100 }}" style="max-width:90px"></label>
     <label>Gift card maximum ($) <input name="gift_max" type="number" min="5" max="2000" value="{{ (s.get('gift_max_cents','50000')|int)//100 }}" style="max-width:100px"></label></div>
+  <label><input type="checkbox" name="gift_share_brands" value="1" {{ 'checked' if s.get('gift_share_brands','0') == '1' else '' }}> Share gift cards across brands (any brand takes any gift card)</label>
+  <div class="muted small">Unchecked: a gift card only works on orders from the brand that sold it, since that brand's PayPal got the money. Checked: every brand takes every card, and you settle up between brands yourself. Cards keep the brand they were sold on, so unchecking this later locks them again.</div>
   <label><input type="checkbox" name="confirm_call" value="1" {{ 'checked' if s.get('confirm_call','1') == '1' else '' }}> New customers' website orders: ask them to call dispatch to confirm before the order goes to the kitchen</label>
   <div class="muted small">Existing customers never have to call. New customers see your dispatch number with a Call button, and the order waits on the board with a "Waiting for confirm call" tag until you tap Customer called or Send to kitchen. Mark customers existing on the Customers page.</div>
   {% if owner_view %}

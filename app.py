@@ -349,7 +349,7 @@ def init_db():
                  ("assign_on_pending", "0"), ("week_open_dow", "4"), ("week_open_date", ""), ("one_run_at_a_time", "0"),
                  ("tip_prompt", "1"), ("dispatch_phone", "3342092844"),
                  ("loyalty_on", "1"), ("points_per_dollar", "1"), ("reward_points", "100"),
-                 ("reward_value_cents", "500"), ("confirm_call", "1"),
+                 ("reward_value_cents", "500"), ("confirm_call", "1"), ("gift_share_brands", "0"),
                  ("signup_points", "50"), ("review_points", "25"), ("reward_options", "150:300,250:500,400:1000"),
                  ("tier_vip_points", "750"), ("tier_elite_points", "1500"), ("bonus_weekday", "1"),
                  ("bonus_starter_pct", "50"), ("bonus_vip_pct", "100"), ("bonus_elite_pct", "200"),
@@ -614,6 +614,7 @@ def init_db():
     con.execute("UPDATE orders SET pp_acct=0 WHERE pp_acct IS NULL AND (pp_state IS NOT NULL OR pp_order_id IS NOT NULL)")
     ensure_column(con, "saved_cards", "pp_acct", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(con, "gift_cards", "pp_acct", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(con, "gift_cards", "site_id", "INTEGER")   # brand that sold it (NULL = before brands, works anywhere)
     ensure_column(con, "orders", "manual_at", "TEXT")
     ensure_column(con, "orders", "manual_by", "TEXT")
     ensure_column(con, "orders", "driver_paged_at", "TEXT")
@@ -7364,6 +7365,10 @@ def api_order_credit():
                        (code, secrets.token_hex(8), cents, o["customer_name"], phone_digits(o["customer_phone"] or ""),
                         o["customer_name"], "Credit for order " + o["code"] + (": " + note if note else ""),
                         o["code"], by, (o["customer_id"] if "customer_id" in _okeys(o) else None), now(), now()))
+    try:
+        db().execute("UPDATE gift_cards SET site_id=? WHERE id=?", (site_id_of_restaurant(o["restaurant_id"]), cur.lastrowid))
+    except Exception as e:
+        print("gift brand skipped:", e)
     g = db().execute("SELECT * FROM gift_cards WHERE id=?", (cur.lastrowid,)).fetchone()
     gift_move(g, cents, "Credit for order " + o["code"] + (": " + note if note else ""), o["id"], by)
     db().execute("UPDATE orders SET credit_cents=credit_cents+? WHERE id=?", (cents, o["id"]))
@@ -11780,7 +11785,8 @@ def dispatch_settings():
                     return None
                 return v if lo <= v <= hi else None
             _vals = {"loyalty_on": "1" if request.form.get("loyalty_on") else "0",
-                     "confirm_call": "1" if request.form.get("confirm_call") else "0"}
+                     "confirm_call": "1" if request.form.get("confirm_call") else "0",
+                     "gift_share_brands": "1" if request.form.get("gift_share_brands") else "0"}
             _ro = []
             for _i in (1, 2, 3, 4):
                 _p, _d = _num("ro_points_%d" % _i, 1, 100000), _num("ro_value_%d" % _i, 1, 100000, 100)
@@ -17046,6 +17052,40 @@ def customer_public(c):
 def gift_norm(code):
     return "".join(ch for ch in str(code or "").upper() if ch.isalnum())
 
+def gift_share_brands():
+    """Settings > Rewards: True = any brand takes any gift card; False (default) = only the brand that sold it."""
+    return (setting("gift_share_brands", str) or "0") == "1"
+
+def gift_site_name(sid):
+    if not sid:
+        return ""
+    try:
+        r = db().execute("SELECT name FROM sites WHERE id=?", (int(sid),)).fetchone()
+        return (r["name"] or "").strip() if r else ""
+    except Exception:
+        return ""
+
+def site_id_of_restaurant(rest_id):
+    try:
+        r = db().execute("SELECT region_id FROM restaurants WHERE id=?", (int(rest_id or 0),)).fetchone()
+        st = site_of_region(r["region_id"]) if r else None
+        return int(st["id"]) if st else None
+    except Exception:
+        return None
+
+def gift_brand_error(g, rest_id):
+    """'' when this card can pay at this restaurant, else the reason it can't."""
+    if gift_share_brands() or not brands_on():
+        return ""
+    gs = _rv(g, "site_id")
+    if not gs:
+        return ""          # sold before cards were tied to a brand
+    rs = site_id_of_restaurant(rest_id)
+    if rs is None or int(rs) == int(gs):
+        return ""
+    return ("That gift card is for " + (gift_site_name(gs) or "another brand") +
+            " and can only be used on " + (gift_site_name(gs) or "that brand") + " orders.")
+
 def gift_find(code):
     n = gift_norm(code)
     if len(n) < 8:
@@ -17064,7 +17104,8 @@ def gift_new_code():
 
 def gift_public(g, full=False):
     out = {"code": g["code"] if full else ("FD-****-****-" + g["code"][-4:]), "balance": money(g["balance_cents"]),
-           "balance_cents": int(g["balance_cents"]), "initial": money(g["initial_cents"]), "status": g["status"]}
+           "balance_cents": int(g["balance_cents"]), "initial": money(g["initial_cents"]), "status": g["status"],
+           "brand": gift_site_name(_rv(g, "site_id")) if not gift_share_brands() else ""}
     if full:
         out.update({"id": g["id"], "buyer": g["buyer_name"] or "", "buyer_phone": nice_phone(g["buyer_phone"]),
                     "to": g["to_name"] or "", "message": g["message"] or "", "sold_by": g["sold_by"] or "",
@@ -17143,6 +17184,9 @@ def checkout_credits(payload, placed_by, dg, subtotal, total):
             return dict(out, error="That gift card number was not found.")
         if int(g["balance_cents"]) <= 0:
             return dict(out, error="That gift card has no balance left.")
+        _gb = gift_brand_error(g, payload.get("restaurant_id"))
+        if _gb:
+            return dict(out, error=_gb)
         out["gift_card_id"], out["gift_cents"] = g["id"], min(int(g["balance_cents"]), left)
         left -= out["gift_cents"]
     sid = payload.get("saved_card_id")
@@ -18086,6 +18130,9 @@ def api_gift_start():
                     to_name, message, status, sold_by, customer_id, created_at) VALUES (?,?,?,0,?,?,?,?,?,'pending','website',?,?)""",
                  ("PENDING-" + ref, ref, cents, name, ph, (b.get("buyer_email") or "").strip()[:120],
                   (b.get("to_name") or "").strip()[:80], (b.get("message") or "").strip()[:240], c["id"] if c else None, now()))
+    _cs = current_site()
+    if _cs:
+        db().execute("UPDATE gift_cards SET site_id=? WHERE ref=?", (int(_cs["id"]), ref))
     db().commit()
     return jsonify({"ok": True, "ref": ref, "amount": money(cents)})
 
@@ -18175,7 +18222,10 @@ def dispatch_gift_cards():
     lo, hi = gift_limits()
     rows = db().execute("SELECT * FROM gift_cards WHERE status!='pending' ORDER BY id DESC LIMIT 100").fetchall()
     return render_template("dispatch_gifts.html", cards=[gift_public(g, True) for g in rows], lo=lo // 100, hi=hi // 100,
-                           owner=is_owner(), pp_on=pp_enabled(), pp_client=pp_client_id())
+                           owner=is_owner(), pp_on=pp_enabled(), pp_client=pp_client_id(),
+                           gift_brands=([dict(id=x["id"], name=x["name"]) for x in
+                                         db().execute("SELECT id, name FROM sites ORDER BY sort, id").fetchall()]
+                                        if brands_on() and not gift_share_brands() else []))
 
 @app.post("/api/dispatch/gift/sell")
 def api_dispatch_gift_sell():
@@ -18212,6 +18262,12 @@ def api_dispatch_gift_sell():
                  ("PENDING-" + ref, ref, cents, name, ph, (b.get("buyer_email") or "").strip()[:120],
                   (b.get("to_name") or "").strip()[:80], (b.get("message") or "").strip()[:240], who,
                   cust["id"] if cust else None, now()))
+    try:
+        _bs = int(b.get("site_id") or 0)
+    except (TypeError, ValueError):
+        _bs = 0
+    if _bs and db().execute("SELECT 1 FROM sites WHERE id=?", (_bs,)).fetchone():
+        db().execute("UPDATE gift_cards SET site_id=? WHERE ref=?", (_bs, ref))
     db().commit()
     g = _gift_by_ref(ref)
     if method == "paypal_terminal":

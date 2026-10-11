@@ -7,6 +7,8 @@
   <label>Buyer name</label><input id="sName"><label>Buyer phone</label><input id="sPhone" type="tel">
   <label>Buyer email (optional)</label><input id="sEmail"><label>For (optional)</label><input id="sTo">
   <label>Message (optional)</label><input id="sMsg" maxlength="240">
+  {% if gift_brands %}<label>Brand (the card only works on this brand's orders)</label>
+  <select id="sBrand">{% for b in gift_brands %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select>{% endif %}
   <label>How they paid</label>
   <select id="sMethod">{% if allow_cash %}<option value="cash">Cash</option>{% endif %}{% if pp_on %}<option value="paypal_terminal" selected>Card, type it in here (PayPal)</option>{% endif %}<option value="card_terminal">Card, ran on another terminal</option>
     <option value="house_account">House account</option>{% if pp_on %}<option value="link">Send them a pay link (card or PayPal)</option>{% endif %}
@@ -31,7 +33,7 @@
 <div class="panel mt"><h2>Recent cards</h2>
 {% for g in cards %}<div class="small row" style="justify-content:space-between;border-bottom:1px solid #eee;padding:4px 0">
   <a href="#" onclick="lCode.value='{{ g.code }}';look();return false">{{ g.code }}</a><span>{{ g.balance }} of {{ g.initial }}</span>
-  <span>{{ g.buyer }}</span><span class="muted">{{ g.status }} · {{ g.pay_method }} · {{ g.sold_by }}</span></div>
+  <span>{{ g.buyer }}</span><span class="muted">{{ g.status }} · {{ g.pay_method }} · {{ g.sold_by }}{% if g.brand %} · {{ g.brand }} only{% endif %}</span></div>
 {% else %}<p class="muted">No gift cards yet.</p>{% endfor %}</div>
 {% endblock %}
 {% block scripts %}{% if pp_on %}<script src="https://www.paypal.com/sdk/js?client-id={{ pp_client }}&currency=USD&intent=capture&enable-funding=card&disable-funding=venmo,paylater&components=buttons"></script>{% endif %}
@@ -39,7 +41,7 @@
 const OWNER = {{ 'true' if owner else 'false' }};
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 async function sell(){
-  const r = await jpost('/api/dispatch/gift/sell',{amount:sAmt.value,buyer_name:sName.value,buyer_phone:sPhone.value,buyer_email:sEmail.value,to_name:sTo.value,message:sMsg.value,method:sMethod.value,pay_ref:sRef.value});
+  const r = await jpost('/api/dispatch/gift/sell',{amount:sAmt.value,buyer_name:sName.value,buyer_phone:sPhone.value,buyer_email:sEmail.value,to_name:sTo.value,message:sMsg.value,site_id:(window.sBrand?sBrand.value:''),method:sMethod.value,pay_ref:sRef.value});
   if(!r.ok){ alert(r.error); return; }
   if(r.terminal){ openTerm(r.ref, r.amount); return; }
   sOut.style.display='';

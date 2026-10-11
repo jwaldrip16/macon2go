@@ -1206,7 +1206,8 @@ BRAND_IMAGES = ("hero_image", "pocket_image")
 # setting keys a brand can override on its own website
 BRAND_TEXT_KEYS = ("home_headline", "home_sub", "site_announce", "how_title", "how1_t", "how1_p", "how2_t", "how2_p",
                    "how3_t", "how3_p", "rest_title", "closed_msg", "any_text", "pocket_title", "pocket_text",
-                   "business_email", "business_address", "social_x", "social_facebook", "social_instagram", "faq_text")
+                   "business_email", "business_address", "social_x", "social_facebook", "social_instagram", "faq_text",
+                   "lunch_hours", "dinner_hours")
 _BRAND_SETTING_KEYS = set(BRAND_TEXT_KEYS) | set(BRAND_IMAGES)
 # Text a brand must have of its own: Crimson 2 Go must not say "Auburn's finest" or link Tiger Town's Instagram.
 _NO_BORROW_KEYS = {"home_headline", "social_x", "social_facebook", "social_instagram"}
@@ -13885,6 +13886,8 @@ SITE_TEXT = (
     ("any_text", "Order from any restaurant in the area. Tell us the place, the items, and the prices, and your driver picks it up.", 300),
     ("pocket_title", "From your pocket to your front porch", 80),
     ("pocket_text", "Order from your phone in a few taps. Add {business} to your home screen and it opens like an app.", 400),
+    ("lunch_hours", "", 200),
+    ("dinner_hours", "", 200),
 )
 SITE_IMAGES = {"hero_image": "/static/home-hero.jpg", "pocket_image": "/static/home-burger.jpg"}
 
@@ -18980,6 +18983,9 @@ def brand_region_hours(site_row):
     These are the same hours and closed dates the driver schedule checks shifts against."""
     if site_row is None:
         return []
+    _d = site_design(site_row)
+    _lh, _dh = (_d.get("lunch_hours") or "").strip(), (_d.get("dinner_hours") or "").strip()
+    _ld = " \u00b7 ".join([b for b in ("Lunch " + _lh if _lh else "", "Dinner " + _dh if _dh else "") if b])
     brand_ph = nice_phone((site_row["phone"] or "").strip()) if (site_row["phone"] or "").strip() else ""
     out = []
     for r in db().execute("SELECT * FROM regions WHERE COALESCE(site_id,0)=? ORDER BY sort, id",
@@ -18987,7 +18993,7 @@ def brand_region_hours(site_row):
         rp = (r["phone"] or "").strip()
         ph = nice_phone(rp) if rp else ""
         out.append({"id": r["id"], "name": (r["name"] or "").strip(),
-                    "hours": business_hours_label(r["id"]) or "",
+                    "hours": _ld or business_hours_label(r["id"]) or "",
                     "closed": closed_dates_label(r["id"], 5),
                     "phone": ph if ph and ph != brand_ph else "",
                     "tel": "".join(ch for ch in ph if ch.isdigit())})

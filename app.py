@@ -9854,6 +9854,26 @@ def api_dispatch_schedule_edit():
             db().execute("UPDATE drivers SET roster='unavailable', roster_day=? WHERE id=?",
                          (dt.date.today().isoformat(), row["driver_id"])) \
                 if row["start_date"] <= dt.date.today().isoformat() <= row["end_date"] else None
+    elif op == "decide_week":
+        # Approve the whole week the driver sent in, in one tap. One message to
+        # the driver instead of one per shift.
+        try:
+            ws = parse_week(b.get("week_start")) if b.get("week_start") else None
+        except Exception:
+            ws = None
+        rows = db().execute("SELECT * FROM availability WHERE driver_id=? AND status='pending'",
+                            (b["driver_id"],)).fetchall()
+        rows = [r for r in rows if not ws or r["week_start"] == ws.isoformat()]
+        if not rows:
+            return jsonify({"ok": False, "error": "No pending hours to approve for that week."}), 400
+        marks = ",".join("?" * len(rows))
+        db().execute("UPDATE availability SET status='approved', decided_by=?, decided_at=? WHERE id IN (%s)" % marks,
+                     [who, now()] + [r["id"] for r in rows])
+        label = "the week of " + short_date(ws) if ws else "your whole schedule"
+        auto_msg("drv_schedule", "INSERT INTO messages(driver_id,sender,sender_name,body,created_at) VALUES(?,?,?,?,?)",
+                 (b["driver_id"], "dispatch", who,
+                  "Your schedule for " + label + " is approved (" + str(len(rows)) +
+                  (" shift" if len(rows) == 1 else " shifts") + ").", now()))
     elif op in ("add", "set_day") and b.get("date"):
         # hours for one date only, never repeating
         try:

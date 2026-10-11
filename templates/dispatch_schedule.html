@@ -146,6 +146,7 @@ async function load(){
         (slots.length ? slots.map(a=>'<div class="wslot '+a.status+'">'+a.start+'-'+a.end+(a.region_label?'<br><span class="small">'+rgMark(a.region_label)+'</span>':'')+'</div>').join('')
                       : '<div class="wslot none">off</div>')+'</div>';
     }).join('');
+    const pendN = d.availability.filter(a=>a.status==='pending' && (!WEEK || a.week_start===WEEK)).length;
     const rows = d.availability.filter(a=>!WEEK || a.week_start===WEEK).map(a=>
       '<div class="row between schedrow"><span>'+a.day+' '+(a.date_label||'')+' '+a.start+'-'+a.end+' '+pill(a.status)+regionTag(a.region_label)+
       (a.decided_by?' <span class="muted small">by '+a.decided_by+'</span>':'')+'</span><span>'+
@@ -165,7 +166,8 @@ async function load(){
     return '<section class="panel"><div class="row between"><h2>'+d.name+
       ' <span class="pill '+(d.roster==='unavailable'?'red':'green')+'">'+d.roster+'</span>'+
       (d.off_today?' <span class="pill amber">off today</span>':'')+'</h2>'+
-      '<span class="muted small">'+d.phone+'</span></div>'+
+      '<span class="muted small">'+d.phone+'</span>'+
+      (pendN ? '<button class="btn tiny primary" onclick="approveWeek('+d.id+')">Approve whole week ('+pendN+')</button>' : '')+'</div>'+
       '<div class="small muted">Regions: '+(d.regions_label ? '<strong>'+rgMark(d.regions_label)+'</strong>' : '<span style="color:#b42318">none assigned yet</span>')+'</div>'+
       '<div class="week">'+week+'</div>'+ rows + off +
       '<div class="row"><input id="nd'+d.id+'" type="date" value="'+new Date().toLocaleDateString('en-CA')+'">'+
@@ -180,6 +182,7 @@ async function post(b){ const r = await jpost('/api/dispatch/schedule', b);
   if(!r.ok){ alert(r.error||'That did not save.'); return false; } load(); return true; }
 async function decide(id, ok){ post({op:'decide', id:id, approve:ok}); }
 async function decideOff(id, ok){ post({op:'decide_off', id:id, approve:ok}); }
+async function approveWeek(did){ post({op:'decide_week', driver_id:did, week_start:WEEK||''}); }
 async function delSlot(id){ post({op:'delete', id:id}); }
 async function delOff(id){ post({op:'delete_off', id:id}); }
 async function addSlot(did){

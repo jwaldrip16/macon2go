@@ -537,6 +537,8 @@ def site_pull(site, st=None):
     # contact
     tel = re.search(r'href=["\']tel:([^"\']+)', page, re.I)
     out["phone"] = re.sub(r"\D", "", tel.group(1))[-10:] if tel else ""
+    if out["phone"] == "8644257155":
+        out["phone"] = ""   # the ordering platform's own support line, not the delivery company's
     mail = re.search(r'href=["\']mailto:([^"\'?]+)', page, re.I)
     out["business_email"] = mail.group(1).strip()[:120] if mail else ""
     soc = {}
@@ -591,6 +593,8 @@ def site_pull(site, st=None):
         if not out["phone"]:
             t2 = re.search(r'href=["\']tel:([^"\']+)', p, re.I)
             out["phone"] = re.sub(r"\D", "", t2.group(1))[-10:] if t2 else ""
+            if out["phone"] == "8644257155":
+                out["phone"] = ""
         if not out["business_email"]:
             m2 = re.search(r'href=["\']mailto:([^"\'?]+)', p, re.I)
             out["business_email"] = m2.group(1).strip()[:120] if m2 else ""

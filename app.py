@@ -1179,6 +1179,25 @@ BRAND_TEXT_KEYS = ("home_headline", "home_sub", "site_announce", "how_title", "h
                    "how3_t", "how3_p", "rest_title", "closed_msg", "any_text", "pocket_title", "pocket_text",
                    "business_email", "business_address", "social_x", "social_facebook", "social_instagram", "faq_text")
 _BRAND_SETTING_KEYS = set(BRAND_TEXT_KEYS) | set(BRAND_IMAGES)
+# Text a brand must have of its own: Crimson 2 Go must not say "Auburn's finest" or link Tiger Town's Instagram.
+_NO_BORROW_KEYS = {"home_headline", "social_x", "social_facebook", "social_instagram"}
+
+
+def _brand_main_cached(site):
+    """True for the brand that is the business itself (or the one on the Railway address); it may
+    fall back to the main settings. Remembered for the rest of the request."""
+    try:
+        cache = g.__dict__.setdefault("_brand_main", {})
+    except Exception:
+        cache = {}
+    sid = site["id"]
+    if sid not in cache:
+        try:
+            hb = home_brand_site()
+            cache[sid] = bool(_brand_is_main(site) or (hb is not None and hb["id"] == sid))
+        except Exception:
+            cache[sid] = True
+    return cache[sid]
 
 
 def site_design(s):
@@ -1254,6 +1273,8 @@ def setting(key, cast=int):
             dv = str(site_design(s).get(key) or "").strip()
             if dv and (key not in BRAND_IMAGES or os.path.exists(os.path.join(UPLOAD_DIR, os.path.basename(dv)))):
                 return cast(dv)
+            if key in _NO_BORROW_KEYS and not _brand_main_cached(s):
+                return None   # a brand without its own never shows the main brand's headline or socials
     # A page view reads the same settings many times (once per restaurant card); remember
     # them for the rest of that one page view. Only for page views (GET), never while saving.
     cache = None
@@ -15825,6 +15846,69 @@ def healthz():
     return jsonify({"ok": True, "time": now()})
 
 init_db()
+
+
+_DD_PHONE = "8644257155"   # the ordering platform's own support line, copied by mistake from old sites
+
+
+def _fix_brand_facts():
+    """Once: correct brand facts that were imported wrong (checked against each brand's own old site
+    on Oct 10, 2026). Bulldawg Food showed the platform's 864 number, no address or email, and a
+    lowercase name; Crimson 2 Go and Bulldawg Food showed Tiger Town's "Auburn's finest" headline."""
+    key = "brand_facts_fix_oct10"
+    try:
+        con = dbx.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        if con.execute("SELECT 1 FROM settings WHERE key=?", (key,)).fetchone():
+            con.close()
+            return
+        dd = re.compile(r"\(?864\)?[\s.-]?425[\s.-]?7155")
+        for r in con.execute("SELECT id, name, phone, design FROM sites").fetchall():
+            n = "".join(ch for ch in (r["name"] or "").lower() if ch.isalnum())
+            try:
+                d = json.loads(r["design"] or "{}")
+                d = d if isinstance(d, dict) else {}
+            except Exception:
+                d = {}
+            name, phone = r["name"] or "", r["phone"] or ""
+            city = good_phone = addr = email = ""
+            if "bulldawg" in n or "bulldog" in n:
+                city, good_phone = "Athens'", "7068507999"
+                addr, email = "675 Pulaski St., Athens, GA 30601", "bulldawgfood2go@gmail.com"
+                if name.strip() == "Bulldawg food":
+                    name = "Bulldawg Food"
+            elif "crimson" in n:
+                city, good_phone = "Tuscaloosa's", "2054699229"
+                addr, email = "2216 15th Street Ste B, Tuscaloosa, AL 35401", "crimson2go@gmail.com"
+            elif "tiger" in n:
+                continue
+            if re.sub(r"\D", "", phone)[-10:] == _DD_PHONE and good_phone:
+                phone = good_phone
+            if good_phone:
+                pretty = "(%s) %s-%s" % (good_phone[:3], good_phone[3:6], good_phone[6:])
+                for k in ("faq_text", "home_sub", "pocket_text", "closed_msg", "site_announce"):
+                    if isinstance(d.get(k), str) and dd.search(d[k]):
+                        d[k] = dd.sub(pretty, d[k])
+            if addr and not str(d.get("business_address") or "").strip():
+                d["business_address"] = addr
+            if email and not str(d.get("business_email") or "").strip():
+                d["business_email"] = email
+            hl = str(d.get("home_headline") or "")
+            if city and (not hl.strip() or "auburn" in hl.lower()):
+                d["home_headline"] = "Delivering %s finest restaurants to your door!" % city
+            for k in ("social_x", "social_facebook", "social_instagram"):
+                if "tigertowntogo" in str(d.get(k) or "").lower():
+                    d[k] = ""
+            con.execute("UPDATE sites SET name=?, phone=?, design=? WHERE id=?",
+                        (name, phone, json.dumps(d), r["id"]))
+        con.execute("INSERT INTO settings(key, value) VALUES(?, '1')", (key,))
+        con.commit()
+        con.close()
+    except Exception as e:
+        print("brand facts fix skipped:", e)
+
+
+_fix_brand_facts()
 
 
 def _auto_secret_key():

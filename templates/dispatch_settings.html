@@ -283,6 +283,7 @@ async function setLogo(inp){
   <h2 id="autokitchen">Send to kitchen automatically</h2>
   <p class="small muted">For a checked region, Send to kitchen happens on its own once an order is placed and ready to go: paid, address approved, and any new-customer confirm call done. Future orders go at their release time. If you pull an order back, it isn't sent again on its own. Unchecked regions still wait for someone to tap Send to kitchen.</p>
   {% for r in AK %}<label><input type="checkbox" name="auto_kitchen_{{ r.id }}" value="1" {% if r.on %}checked{% endif %}> {{ r.label }}</label>
+  <label class="small">{{ r.label }}: wait <input type="number" name="kitchen_delay_{{ r.id }}" min="0" max="120" value="{{ r.delay }}" style="width:64px"> minutes before sending on its own, so dispatch can swap the restaurant first (0 = send as soon as it's ready)</label>
   {% else %}<p class="muted small">Add a region first.</p>{% endfor %}
 {% endif %}
 {% if owner_view %}{% set ON = ordnum_view() %}

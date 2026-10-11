@@ -569,7 +569,8 @@ def init_db():
     ensure_column(con, "regions", "faq_text", "TEXT")
     ensure_column(con, "regions", "stats_with", "INTEGER DEFAULT 0")
     ensure_column(con, "regions", "drive_with", "INTEGER DEFAULT 0")   # drivers treat this region and another as one area   # count this region's statistics with another region
-    ensure_column(con, "regions", "auto_kitchen", "INTEGER DEFAULT 0")   # 1 = Send to kitchen happens on its own             # blank = the business FAQ
+    ensure_column(con, "regions", "auto_kitchen", "INTEGER DEFAULT 0")   # 1 = Send to kitchen happens on its own
+    ensure_column(con, "regions", "kitchen_delay_min", "INTEGER DEFAULT 0")   # wait this many minutes first, so dispatch can swap the restaurant             # blank = the business FAQ
     ensure_column(con, "restaurants", "min_order_cents", "INTEGER")  # blank = use the region's
     ensure_column(con, "restaurants", "partner", "INTEGER NOT NULL DEFAULT 1")  # 0 = non-partner service fee
     for _k in ("service_fee_np_bp", "driver_pay_base_cents", "driver_pay_mile_cents"):
@@ -689,6 +690,7 @@ def init_db():
     ensure_column(con, "orders", "primary_seq", "INTEGER")
     ensure_column(con, "orders", "primary_day", "TEXT")
     ensure_column(con, "orders", "auto_kitchen_at", "TEXT")   # when the region's automatic Send to kitchen fired
+    ensure_column(con, "orders", "auto_kitchen_ready_at", "TEXT")  # when the order first qualified; the swap window counts from here
     ensure_column(con, "restaurants", "cuisine", "TEXT")
     con.execute("UPDATE drivers SET roster='scheduled' WHERE roster IS NULL OR roster=''")
     con.commit()
@@ -7333,7 +7335,7 @@ def auto_kitchen_sweep():
     try:
         if not db().execute("SELECT 1 FROM regions WHERE COALESCE(auto_kitchen,0)=1 LIMIT 1").fetchone():
             return 0
-        rows = db().execute("""SELECT o.* FROM orders o LEFT JOIN restaurants r ON r.id=o.restaurant_id
+        rows = db().execute("""SELECT o.*, g.kitchen_delay_min FROM orders o LEFT JOIN restaurants r ON r.id=o.restaurant_id
             LEFT JOIN regions g ON g.id=COALESCE(NULLIF(o.region_id,0), r.region_id)
             WHERE COALESCE(g.auto_kitchen,0)=1 AND COALESCE(o.kitchen_go,0)=0 AND o.kitchen_status='waiting'
               AND o.dispatch_status NOT IN ('cancelled','delivered','awaiting_payment','scheduled')
@@ -7343,6 +7345,20 @@ def auto_kitchen_sweep():
         log("order", "automatic send to kitchen skipped: %s" % e)
         return 0
     for o in rows:
+        dl = int(o["kitchen_delay_min"] or 0)
+        if dl > 0:
+            # swap window: hold the order dl minutes after it first qualified, so dispatch
+            # can swap it to another restaurant before the kitchen sees it.
+            if not o["auto_kitchen_ready_at"]:
+                db().execute("UPDATE orders SET auto_kitchen_ready_at=? WHERE id=?", (now(), o["id"]))
+                continue
+            try:
+                ready = dt.datetime.fromisoformat(str(o["auto_kitchen_ready_at"])[:19])
+            except (TypeError, ValueError):
+                db().execute("UPDATE orders SET auto_kitchen_ready_at=? WHERE id=?", (now(), o["id"]))
+                continue
+            if dt.datetime.now() < ready + dt.timedelta(minutes=dl):
+                continue
         db().execute("UPDATE orders SET auto_kitchen_at=? WHERE id=?", (now(), o["id"]))
         release_to_kitchen(o, "automatic send (region setting)")
     if rows:
@@ -7703,8 +7719,14 @@ def api_dispatch_order_edit_load(oid):
         tok = re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower())
         swaps.append({"id": cand["id"], "name": cand["name"], "open": bool(is_open(cand)), "chain": tok == chain})
     swaps.sort(key=lambda x: (not x["chain"], not x["open"], x["name"].lower()))
+    can_swap, swap_block = True, ""
+    if _rv(o, "dispatch_status") == "enroute":
+        can_swap, swap_block = False, "The driver already has the food, so the pickup can't change."
+    elif _rv(o, "dispatch_status") in ("delivered", "cancelled"):
+        can_swap, swap_block = False, "This order is closed."
     return jsonify({"ok": True, "id": o["id"], "code": o["code"],
                     "restaurant": r["name"] if r else "",
+                    "can_swap": can_swap, "swap_block": swap_block,
                     "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
                     "fee_cents": o["fee_cents"], "tip_cents": o["tip_cents"],
@@ -7781,6 +7803,8 @@ def api_order_edit():
                          (nr["id"], nr["name"], nr["address"], nr["phone"], nr["lat"], nr["lng"], mi, o["id"]))
             db().execute("""UPDATE orders SET kitchen_sent_at=NULL, auto_kitchen_at=NULL, kitchen_go=1
                             WHERE id=? AND kitchen_status='pending'""", (o["id"],))
+            db().execute("""UPDATE orders SET auto_kitchen_ready_at=NULL WHERE id=?
+                            AND kitchen_status='waiting' AND auto_kitchen_at IS NULL""", (o["id"],))
             o = db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone()
             changed.append("restaurant")
             swap_msg = "Moved to " + nr["name"] + " for pickup" + \
@@ -7910,8 +7934,9 @@ app.jinja_env.globals["ordshow"] = ordshow
 
 
 def autokitchen_view():
-    return [{"id": r["id"], "label": region_label(r["id"]), "on": bool(r["auto_kitchen"])}
-            for r in db().execute("SELECT id, COALESCE(auto_kitchen,0) auto_kitchen FROM regions ORDER BY name").fetchall()]
+    return [{"id": r["id"], "label": region_label(r["id"]), "on": bool(r["auto_kitchen"]),
+             "delay": int(r["kitchen_delay_min"] or 0)}
+            for r in db().execute("SELECT id, COALESCE(auto_kitchen,0) auto_kitchen, COALESCE(kitchen_delay_min,0) kitchen_delay_min FROM regions ORDER BY name").fetchall()]
 
 
 app.jinja_env.globals["autokitchen_view"] = autokitchen_view
@@ -11865,6 +11890,12 @@ def dispatch_settings():
             for x in db().execute("SELECT id FROM regions").fetchall():
                 db().execute("UPDATE regions SET auto_kitchen=? WHERE id=?",
                              (1 if request.form.get("auto_kitchen_%d" % x["id"]) else 0, x["id"]))
+                _dl = request.form.get("kitchen_delay_%d" % x["id"], "").strip()
+                if _dl.isdigit():
+                    db().execute("UPDATE regions SET kitchen_delay_min=? WHERE id=?",
+                                 (min(120, max(0, int(_dl))), x["id"]))
+                else:
+                    db().execute("UPDATE regions SET kitchen_delay_min=0 WHERE id=?", (x["id"],))
             db().commit()
             auto_kitchen_sweep()
         if "ordnum_present" in request.form and is_owner(session.get("dispatcher_id")):

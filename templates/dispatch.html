@@ -396,12 +396,14 @@ async function editOrder(oid){
       '<button type="button" class="btn tiny" onclick="edTipPct(0)">No tip</button>'+
       '<button type="button" class="btn tiny" onclick="var t=document.getElementById(\'edTip\');t.focus();t.select()">Custom</button>'+
       '<span class="small muted" id="edTipLbl"></span></div>'+
-    '<label class="small">Pick up from <select id="edRest" style="width:100%">'+
+    (res.can_swap===false
+      ? '<div class="small muted">Swap restaurant: '+edEsc(res.swap_block||'not available')+'</div>'
+      : '<label class="small">Pick up from <select id="edRest" style="width:100%">'+
         '<option value="keep">'+edEsc(res.restaurant)+' (now)</option>'+
         (res.swap_restaurants||[]).map(function(sr){
           return '<option value="'+sr.id+'">'+edEsc(sr.name)+(sr.open?'':' (closed)')+'</option>'; }).join('')+
       '</select></label>'+
-      '<div class="small muted">Swapping keeps the delivery fee the same and sends the order to the new kitchen.</div>'+    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
+      '<div class="small muted">Swapping keeps the delivery fee the same and sends the order to the new kitchen.</div>')+    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
     '<div class="small muted" id="edSub"></div>'+
     '<div class="addbag"><button type="button" class="btn" onclick="edClose()">Cancel</button>'+
       '<button type="button" class="btn primary" id="edSave" onclick="edSave()">Save changes</button></div>'+

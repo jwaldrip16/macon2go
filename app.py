@@ -152,6 +152,15 @@ CREATE TABLE IF NOT EXISTS week_submissions (
   note TEXT,
   UNIQUE(driver_id, week_start));
 
+CREATE TABLE IF NOT EXISTS sched_notices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  driver_id INTEGER NOT NULL,
+  week_start TEXT NOT NULL,
+  day TEXT NOT NULL,
+  kind TEXT,
+  sent_at TEXT,
+  UNIQUE(driver_id, week_start, day));
+
 CREATE TABLE IF NOT EXISTS closures (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   restaurant_id INTEGER,
@@ -6929,6 +6938,8 @@ def api_board():
         "brands": brand_pause_rows(),
         "queues_all": not myr,
         "auto": bool(setting("auto_assign")),
+        "disp_pend": db().execute(
+            "SELECT COUNT(*) c FROM dispatcher_availability WHERE status='pending'").fetchone()["c"],
         "tokens": token_list(),
         "alerts": open_call_alerts(),
         "awaiting": awaiting_accept(),
@@ -9680,8 +9691,12 @@ def api_driver_week_save():
                  (did, key, stamp, (data.get("note") or "").strip()))
     name = db().execute("SELECT name FROM drivers WHERE id=?", (did,)).fetchone()["name"]
     late = " (after the deadline)" if dt.datetime.now() > week_due(ws) else ""
-    log("availability", name + " sent availability for " + week_label(ws) + ": " +
-        (str(len(clean)) + " day" + ("" if len(clean) == 1 else "s") if clean else "no days") + late)
+    nday = (str(len(clean)) + " day" + ("" if len(clean) == 1 else "s") if clean else "no days") + late
+    log("availability", name + " sent availability for " + week_label(ws) + ": " + nday)
+    auto_msg("drv_schedule", """INSERT INTO messages(driver_id,sender,sender_name,body,created_at,seen_by_dispatch)
+                    VALUES(?,?,?,?,?,0)""",
+             (did, "driver", name, "Schedule sent in for the week of " + range_label(ws) +
+              ": " + nday + ". It is ready to approve.", stamp))
     db().commit()
     return jsonify({"ok": True, "week": week_block(did, ws)})
 
@@ -16669,6 +16684,64 @@ def auto_business_tick(when=None):
         business_set(False, "automatic close (closing time)")
         return "closed"
     return ""
+
+def sched_notice_tick():
+    """Tell drivers when next week's schedule opens, and remind them daily until
+    they send it in. One notice per driver per week per day, each says the Sunday
+    11:59 PM deadline."""
+    ensure_open_week()
+    ws = open_week_start()
+    if not week_is_open(ws) or dt.datetime.now() > week_due(ws):
+        return
+    ws_iso = ws.isoformat()
+    today = dt.date.today().isoformat()
+    sunday = ws - dt.timedelta(days=1)
+    subs = {r["driver_id"]: r for r in db().execute(
+        "SELECT * FROM week_submissions WHERE week_start=?", (ws_iso,)).fetchall()}
+    for d in db().execute("SELECT * FROM drivers").fetchall():
+        sub = subs.get(d["id"])
+        if sub and sub["submitted_at"]:
+            continue
+        # already has hours on file for that week (sent in or added by dispatch): no nag
+        if db().execute("SELECT 1 FROM availability WHERE driver_id=? AND week_start=? LIMIT 1",
+                        (d["id"], ws_iso)).fetchone():
+            continue
+        # approved time off covering the whole week: no nag
+        if db().execute("""SELECT 1 FROM time_off WHERE driver_id=? AND status='approved'
+                           AND start_date<=? AND end_date>=?""",
+                        (d["id"], ws_iso, (ws + dt.timedelta(days=6)).isoformat())).fetchone():
+            continue
+        if db().execute("SELECT 1 FROM sched_notices WHERE driver_id=? AND week_start=? AND day=?",
+                        (d["id"], ws_iso, today)).fetchone():
+            continue
+        opening = bool(sub and sub["opened_at"] and sub["opened_at"][:10] == today)
+        if opening:
+            body = ("Your schedule for the week of " + range_label(ws) +
+                    " is open. Send in your hours in the driver app; they are due Sunday " +
+                    short_date(sunday) + " at 11:59 PM.")
+        else:
+            body = ("Reminder: you have not sent in your schedule for the week of " +
+                    range_label(ws) + " yet. It is due Sunday " + short_date(sunday) +
+                    " at 11:59 PM.")
+        db().execute("INSERT OR IGNORE INTO sched_notices(driver_id,week_start,day,kind,sent_at) VALUES(?,?,?,?,?)",
+                     (d["id"], ws_iso, today, "open" if opening else "remind", now()))
+        auto_msg("drv_schedule", "INSERT INTO messages(driver_id,sender,sender_name,body,created_at) VALUES(?,?,?,?,?)",
+                 (d["id"], "dispatch", "dispatch", body, now()))
+    db().commit()
+
+
+def _sched_notice_worker():
+    time.sleep(120)     # let startup settle before the first sweep
+    while True:
+        try:
+            with app.app_context():
+                sched_notice_tick()
+        except Exception as e:
+            print("schedule notices skipped:", e)
+        time.sleep(3600)
+
+threading.Thread(target=_sched_notice_worker, daemon=True).start()
+
 
 def _auto_business_worker():
     while True:

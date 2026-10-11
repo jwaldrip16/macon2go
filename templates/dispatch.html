@@ -6,7 +6,7 @@
   <div><a class="btn small primary" href="/dispatch/new-order">Create order</a>
        <a class="btn small" href="/dispatch/restaurants">Restaurant hours</a>
        <a class="btn small" href="/dispatch/schedule">Driver schedule</a>
-       <a class="btn small" href="/dispatch/dispatcher-schedule">Dispatcher schedule</a>
+       <a class="btn small" id="dispSchedLink" href="/dispatch/dispatcher-schedule">Dispatcher schedule</a>
        <a class="btn small" href="/dispatch/driver-pay">Driver pay</a>
        <a class="btn small" href="/dispatch/shift-stats">Best shifts</a>
   <a class="btn small" href="/dispatch/map">Driver map</a>
@@ -1139,6 +1139,9 @@ async function board(force){
   if (res.business_open !== undefined) drawBusiness(res.business_open);
   { const ab = document.getElementById('autoBiz');
     if (ab && res.auto_business !== undefined && document.activeElement !== ab) ab.checked = !!res.auto_business; }
+  { const dl = document.getElementById('dispSchedLink');
+    if (dl && res.disp_pend !== undefined)
+      dl.textContent = 'Dispatcher schedule' + ((res.disp_pend||0) ? ' ('+res.disp_pend+')' : ''); }
   try { futureBadge(res.future_count || 0); } catch(e) {}
   try { restChatNotify(res); } catch(e) { console.log('rest chat skipped', e); }
   try { drawLate(res.late || []); } catch(e) { console.log('late skipped', e); }

@@ -7717,7 +7717,9 @@ def api_dispatch_order_edit_load(oid):
         if regs and (cand["region_id"] or 0) not in regs:
             continue
         tok = re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower())
-        swaps.append({"id": cand["id"], "name": cand["name"], "open": bool(is_open(cand)), "chain": tok == chain})
+        if tok != chain:
+            continue   # a different name cannot be swapped
+        swaps.append({"id": cand["id"], "name": cand["name"], "open": bool(is_open(cand)), "chain": True})
     swaps.sort(key=lambda x: (not x["chain"], not x["open"], x["name"].lower()))
     can_swap, swap_block = True, ""
     if _rv(o, "dispatch_status") == "enroute":
@@ -7727,6 +7729,7 @@ def api_dispatch_order_edit_load(oid):
     return jsonify({"ok": True, "id": o["id"], "code": o["code"],
                     "restaurant": r["name"] if r else "",
                     "can_swap": can_swap, "swap_block": swap_block,
+                    "swap_note": "" if swaps else "No other locations with this name.",
                     "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
                     "fee_cents": o["fee_cents"], "tip_cents": o["tip_cents"],
@@ -7793,6 +7796,11 @@ def api_order_edit():
             nr = db().execute("SELECT * FROM restaurants WHERE id=?", (new_rid,)).fetchone()
             if not nr or restaurant_locked(nr):
                 return jsonify({"ok": False, "error": "That restaurant isn't live."}), 400
+            cr = db().execute("SELECT name FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+            _cur = re.sub(r"[^a-z0-9]+", "", ((cr["name"] if cr else "") or "").split(" ")[0].lower())
+            _new = re.sub(r"[^a-z0-9]+", "", (nr["name"] or "").split(" ")[0].lower())
+            if _cur != _new:
+                return jsonify({"ok": False, "error": "Swaps are only between locations with the same name."}), 400
             try:
                 mi = round(haversine_miles(nr["lat"], nr["lng"], o["lat"], o["lng"]) * ROAD_FACTOR, 2) \
                      if (nr["lat"] is not None and o["lat"] is not None) else (o["miles"] or 0)

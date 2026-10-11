@@ -7759,6 +7759,8 @@ def api_dispatch_order_edit_load(oid):
         can_swap, swap_block = False, "The driver already has the food, so the pickup can't change."
     elif _rv(o, "dispatch_status") in ("delivered", "cancelled"):
         can_swap, swap_block = False, "This order is closed."
+    elif o["kitchen_status"] in ("preparing", "ready"):
+        can_swap, swap_block = False, "The restaurant already confirmed this order."
     hist = []
     try:
         for h in db().execute("""SELECT from_rest,to_rest,old_no,new_no,by,at FROM order_swaps
@@ -7843,6 +7845,8 @@ def api_order_edit():
         if new_rid and new_rid != o["restaurant_id"]:
             if o["dispatch_status"] == "enroute":
                 return jsonify({"ok": False, "error": "The driver already has the food, so the pickup can't change."}), 400
+            if o["kitchen_status"] in ("preparing", "ready"):
+                return jsonify({"ok": False, "error": "The restaurant already confirmed this order, so the pickup can't change."}), 400
             nr = db().execute("SELECT * FROM restaurants WHERE id=?", (new_rid,)).fetchone()
             if not nr or restaurant_locked(nr):
                 return jsonify({"ok": False, "error": "That restaurant isn't live."}), 400

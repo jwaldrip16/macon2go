@@ -10913,54 +10913,6 @@ def dispatch_schedule_page():
     return render_template("dispatch_schedule.html", days=DOW_NAMES)
 
 
-# ---------------------------------------------------------------- closed days calendar
-
-@app.get("/api/dispatch/closures")
-def api_closures():
-    if not dispatcher_required():
-        return jsonify({"ok": False}), 403
-    rid = request.args.get("restaurant_id")
-    rid = int(rid) if rid and rid != "all" else None
-    rows = db().execute("SELECT * FROM closures ORDER BY day").fetchall()
-    return jsonify({"ok": True,
-                    "closures": [{"id": r["id"], "day": r["day"], "reason": r["reason"] or "",
-                                  "restaurant_id": r["restaurant_id"]} for r in rows],
-                    "restaurants": [{"id": r["id"], "name": r["name"],
-                                     "hours": json.loads(r["hours"]), "open_24": r["open_24"],
-                                     "paused": r["closed_override"]}
-                                    for r in db().execute(
-                                        "SELECT * FROM restaurants WHERE slug!='oneoff' ORDER BY name").fetchall()]})
-
-@app.post("/api/dispatch/closure")
-def api_closure():
-    """Toggle a calendar day closed. restaurant_id null closes every store that day."""
-    if not dispatcher_required():
-        return jsonify({"ok": False}), 403
-    data = request.get_json(force=True)
-    day = data.get("day")
-    if not day:
-        return jsonify({"ok": False, "error": "pick a day"}), 400
-    rid = data.get("restaurant_id")
-    rid = int(rid) if rid not in (None, "", "all") else None
-    row = db().execute("""SELECT id FROM closures WHERE day=? AND
-                          ((restaurant_id IS NULL AND ? IS NULL) OR restaurant_id=?)""",
-                       (day, rid, rid)).fetchone()
-    if row:
-        db().execute("DELETE FROM closures WHERE id=?", (row["id"],))
-        state = "open"
-    else:
-        db().execute("INSERT INTO closures(restaurant_id,day,reason) VALUES(?,?,?)",
-                     (rid, day, data.get("reason", "")))
-        state = "closed"
-    db().commit()
-    return jsonify({"ok": True, "day": day, "state": state})
-
-@app.get("/dispatch/hours")
-def dispatch_hours_page():
-    if not dispatcher_required():
-        return redirect("/dispatch/login")
-    return render_template("dispatch_hours.html")
-
 STACK_UNLIMITED = 999
 
 @app.post("/api/dispatch/driver-active")

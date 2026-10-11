@@ -691,6 +691,14 @@ def init_db():
     ensure_column(con, "orders", "primary_day", "TEXT")
     ensure_column(con, "orders", "auto_kitchen_at", "TEXT")   # when the region's automatic Send to kitchen fired
     ensure_column(con, "orders", "auto_kitchen_ready_at", "TEXT")  # when the order first qualified; the swap window counts from here
+    con.execute("""CREATE TABLE IF NOT EXISTS order_swaps (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     order_id INTEGER NOT NULL,
+                     order_code TEXT NOT NULL,
+                     from_rest TEXT, to_rest TEXT,
+                     old_no TEXT, new_no TEXT,
+                     by TEXT, at TEXT)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_order_swaps_oid ON order_swaps(order_id)")
     ensure_column(con, "restaurants", "cuisine", "TEXT")
     con.execute("UPDATE drivers SET roster='scheduled' WHERE roster IS NULL OR roster=''")
     con.commit()
@@ -7743,9 +7751,26 @@ def api_dispatch_order_edit_load(oid):
         can_swap, swap_block = False, "The driver already has the food, so the pickup can't change."
     elif _rv(o, "dispatch_status") in ("delivered", "cancelled"):
         can_swap, swap_block = False, "This order is closed."
+    hist = []
+    try:
+        for h in db().execute("""SELECT from_rest,to_rest,old_no,new_no,by,at FROM order_swaps
+                                  WHERE order_id=? ORDER BY id DESC LIMIT 12""", (oid,)).fetchall():
+            when = ""
+            try:
+                when = dt.datetime.fromisoformat(h["at"]).strftime("%b %d, %I:%M %p")
+            except Exception:
+                when = h["at"] or ""
+            num = ""
+            if h["old_no"] or h["new_no"]:
+                num = " (" + (h["old_no"] or "?") + " to " + (h["new_no"] or "?") + ")"
+            hist.append({"line": when + ": moved from " + (h["from_rest"] or "?") + " to " +
+                                (h["to_rest"] or "?") + num + ", by " + (h["by"] or "dispatch")})
+    except Exception:
+        pass
     return jsonify({"ok": True, "id": o["id"], "code": o["code"],
                     "restaurant": r["name"] if r else "",
                     "can_swap": can_swap, "swap_block": swap_block,
+                    "swap_history": hist,
                     "swap_note": "" if swaps else "No other locations with this name.",
                     "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
@@ -7818,6 +7843,7 @@ def api_order_edit():
             _new = re.sub(r"[^a-z0-9]+", "", (nr["name"] or "").split(" ")[0].lower())
             if _cur != _new:
                 return jsonify({"ok": False, "error": "Swaps are only between locations with the same name."}), 400
+            old_no = (o["primary_no"] if "primary_no" in o.keys() else "") or ""
             try:
                 mi = round(haversine_miles(nr["lat"], nr["lng"], o["lat"], o["lng"]) * ROAD_FACTOR, 2) \
                      if (nr["lat"] is not None and o["lat"] is not None) else (o["miles"] or 0)
@@ -7832,16 +7858,25 @@ def api_order_edit():
                           and o["auto_kitchen_ready_at"])
             db().execute("""UPDATE orders SET auto_kitchen_ready_at=NULL WHERE id=?
                             AND kitchen_status='waiting' AND auto_kitchen_at IS NULL""", (o["id"],))
+            db().execute("UPDATE orders SET primary_no=NULL, primary_seq=NULL, primary_day=NULL WHERE id=?", (o["id"],))
+            new_no = assign_primary(o["id"]) or ""
             o = db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone()
             changed.append("restaurant")
             swap_msg = "Moved to " + nr["name"] + " for pickup" + \
                        (", %.1f mi from the customer now" % mi if mi else "") + \
                        ". Delivery fee is unchanged."
+            if new_no:
+                swap_msg += " New restaurant order number: " + new_no + \
+                            (", was " + old_no if old_no else "") + "."
             if _in_window:
                 # Dispatch confirmed the swap, so the order goes to the kitchen right away
                 # instead of waiting out the rest of the swap window.
                 release_to_kitchen(o, "dispatch (swap confirmed)")
                 swap_msg += " Sent to the kitchen right away since the swap is confirmed."
+            db().execute("""INSERT INTO order_swaps (order_id,order_code,from_rest,to_rest,old_no,new_no,by,at)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                         (o["id"], o["code"], (cr["name"] if cr else ""), nr["name"], old_no, new_no,
+                          session.get("dispatcher_name") or "dispatch", now()))
             log("order_swap", rest_ord_no(o) + " moved to " + nr["name"] + " by " + (session.get("dispatcher_name") or "dispatch"))
     new_fee_from_address = None
     if "address" in data:

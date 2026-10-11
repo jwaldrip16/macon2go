@@ -404,8 +404,12 @@ async function editOrder(oid){
           res.swap_restaurants.map(function(sr){
             return '<option value="'+sr.id+'">'+edEsc(sr.name)+(sr.open?'':' (closed)')+'</option>'; }).join('')+
         '</select></label>'+
-        '<div class="small muted">Swapping keeps the delivery fee the same and the kitchen gets the order right away when you save. Only locations with the same name are listed.</div>'
-        : '<div class="small muted">Swap restaurant: '+edEsc(res.swap_note||'No other locations with this name.')+'</div>'))+    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
+        '<div class="small muted">Swapping keeps the delivery fee the same, gives the order a new restaurant number, and the kitchen gets it right away when you save. Only locations with the same name are listed.</div>'
+        : '<div class="small muted">Swap restaurant: '+edEsc(res.swap_note||'No other locations with this name.')+'</div>'))+
+    ((res.swap_history||[]).length
+      ? '<details class="edcustom"><summary>Swap history ('+res.swap_history.length+')</summary>'+
+        res.swap_history.map(function(h){ return '<div class="small muted">'+edEsc(h.line)+'</div>'; }).join('')+'</details>'
+      : '')+    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
     '<div class="small muted" id="edSub"></div>'+
     '<div class="addbag"><button type="button" class="btn" onclick="edClose()">Cancel</button>'+
       '<button type="button" class="btn primary" id="edSave" onclick="edSave()">Save changes</button></div>'+

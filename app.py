@@ -7691,9 +7691,21 @@ def api_dispatch_order_edit_load(oid):
     o = db().execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
     if not o:
         return jsonify({"ok": False, "error": "Order not found."}), 404
-    r = db().execute("SELECT name FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+    r = db().execute("SELECT * FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+    chain = re.sub(r"[^a-z0-9]+", "", ((r["name"] if r else "") or "").split(" ")[0].lower())
+    regs = None if is_owner() else dispatcher_view_regions(session.get("dispatcher_id"))
+    swaps = []
+    for cand in db().execute("SELECT * FROM restaurants WHERE slug!='oneoff' ORDER BY name").fetchall():
+        if cand["id"] == o["restaurant_id"] or restaurant_locked(cand):
+            continue
+        if regs and (cand["region_id"] or 0) not in regs:
+            continue
+        tok = re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower())
+        swaps.append({"id": cand["id"], "name": cand["name"], "open": bool(is_open(cand)), "chain": tok == chain})
+    swaps.sort(key=lambda x: (not x["chain"], not x["open"], x["name"].lower()))
     return jsonify({"ok": True, "id": o["id"], "code": o["code"],
                     "restaurant": r["name"] if r else "",
+                    "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
                     "fee_cents": o["fee_cents"], "tip_cents": o["tip_cents"],
                     "ref": o["ref_code"] or "",
@@ -7744,6 +7756,37 @@ def api_order_edit():
         an = str(data.get("address_note") or "").strip()[:200]
         if an != (o["address_note"] or ""):
             db().execute("UPDATE orders SET address_note=? WHERE id=?", (an, o["id"])); changed.append("apt/note")
+    # Swap the order to a different restaurant of the same chain (or any live one).
+    # The delivery fee stays what the customer paid; only the pickup and the driver's
+    # distance change. The kitchen gets it again if it was already sent to the old one.
+    swap_msg = ""
+    if data.get("swap_restaurant") not in (None, "", "keep"):
+        try:
+            new_rid = int(data.get("swap_restaurant"))
+        except (TypeError, ValueError):
+            new_rid = 0
+        if new_rid and new_rid != o["restaurant_id"]:
+            if o["dispatch_status"] == "enroute":
+                return jsonify({"ok": False, "error": "The driver already has the food, so the pickup can't change."}), 400
+            nr = db().execute("SELECT * FROM restaurants WHERE id=?", (new_rid,)).fetchone()
+            if not nr or restaurant_locked(nr):
+                return jsonify({"ok": False, "error": "That restaurant isn't live."}), 400
+            try:
+                mi = round(haversine_miles(nr["lat"], nr["lng"], o["lat"], o["lng"]) * ROAD_FACTOR, 2) \
+                     if (nr["lat"] is not None and o["lat"] is not None) else (o["miles"] or 0)
+            except Exception:
+                mi = o["miles"] or 0
+            db().execute("""UPDATE orders SET restaurant_id=?, pickup_name=?, pickup_address=?, pickup_phone=?,
+                            pickup_lat=?, pickup_lng=?, miles=? WHERE id=?""",
+                         (nr["id"], nr["name"], nr["address"], nr["phone"], nr["lat"], nr["lng"], mi, o["id"]))
+            db().execute("""UPDATE orders SET kitchen_sent_at=NULL, auto_kitchen_at=NULL, kitchen_go=1
+                            WHERE id=? AND kitchen_status='pending'""", (o["id"],))
+            o = db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone()
+            changed.append("restaurant")
+            swap_msg = "Moved to " + nr["name"] + " for pickup" + \
+                       (", %.1f mi from the customer now" % mi if mi else "") + \
+                       ". Delivery fee is unchanged."
+            log("order_swap", rest_ord_no(o) + " moved to " + nr["name"] + " by " + (session.get("dispatcher_name") or "dispatch"))
     new_fee_from_address = None
     if "address" in data:
         ad = " ".join(str(data.get("address") or "").split())[:200]
@@ -7805,7 +7848,8 @@ def api_order_edit():
     dupe = ref_in_use(clean_ref(data.get("ref"), data.get("customer_phone") or o["customer_phone"]), o["id"]) if "ref" in data else None
     house_sync(o)
     rest = pp_collect_rest(o, "changed by " + who) if (o["pp_state"] or "") == "captured" else {}
-    return jsonify({"ok": True, "dupe": dupe, "changed": changed, "address_msg": addr_msg, "rest": rest, "subtotal": money(subtotal), "fee": money(fee),
+    return jsonify({"ok": True, "dupe": dupe, "changed": changed, "address_msg": addr_msg, "swap_msg": swap_msg,
+                    "rest": rest, "subtotal": money(subtotal), "fee": money(fee),
                     "item_fee": money(ifee), "tax": money(tax),
                     "service": money(service), "tip": money(tip), "total": money(total)})
 

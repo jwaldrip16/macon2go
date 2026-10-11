@@ -396,7 +396,12 @@ async function editOrder(oid){
       '<button type="button" class="btn tiny" onclick="edTipPct(0)">No tip</button>'+
       '<button type="button" class="btn tiny" onclick="var t=document.getElementById(\'edTip\');t.focus();t.select()">Custom</button>'+
       '<span class="small muted" id="edTipLbl"></span></div>'+
-    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
+    '<label class="small">Pick up from <select id="edRest" style="width:100%">'+
+        '<option value="keep">'+edEsc(res.restaurant)+' (now)</option>'+
+        (res.swap_restaurants||[]).map(function(sr){
+          return '<option value="'+sr.id+'">'+edEsc(sr.name)+(sr.open?'':' (closed)')+'</option>'; }).join('')+
+      '</select></label>'+
+      '<div class="small muted">Swapping keeps the delivery fee the same and sends the order to the new kitchen.</div>'+    '<label class="small">Their order number <input id="edRef" maxlength="40" autocomplete="off" name="their_slip_no" value="'+edEsc(res.ref)+'"></label>'+
     '<div class="small muted" id="edSub"></div>'+
     '<div class="addbag"><button type="button" class="btn" onclick="edClose()">Cancel</button>'+
       '<button type="button" class="btn primary" id="edSave" onclick="edSave()">Save changes</button></div>'+
@@ -468,6 +473,7 @@ async function edSave(){
   const btn=document.getElementById('edSave'); btn.disabled=true;
   const ref=document.getElementById('edRef').value;
   const r2 = await jpost('/api/order/edit', {order_id: ED.id, items: ED.items, ref: ref,
+      swap_restaurant: document.getElementById('edRest') ? document.getElementById('edRest').value : 'keep',
       customer_name: document.getElementById('edCName').value,
       customer_phone: document.getElementById('edCPhone').value,
       address: document.getElementById('edCAddr').value,
@@ -479,6 +485,7 @@ async function edSave(){
   btn.disabled=false;
   if(r2 && r2.ok){
     if(r2.dupe) alert('Heads up: '+ref+' is already on order '+r2.dupe+' today.');
+    if(r2.swap_msg) alert(r2.swap_msg);
     if(r2.address_msg) alert(r2.address_msg);
     if(r2.rest && r2.rest.charged) alert('Charged the extra '+r2.rest.charged+' to the customer\'s '+r2.rest.card+' through PayPal.');
     else if(r2.rest && r2.rest.error) alert(r2.rest.error);

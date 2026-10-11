@@ -813,28 +813,31 @@ const REDO_REASONS = [['missing_item','Restaurant left an item off'],['wrong_ite
   ['food_quality','Food was cold or wrong temperature'],['wrong_address','Driver delivered to the wrong address'],
   ['never_delivered','Order never reached the customer'],['damaged','Order was damaged in transit'],
   ['late','Order was too late'],['other','Other']];
-function redoDialog(id){
+function redoDialog(id, problem){
   const o = (LIVE_ORDERS||[]).find(x=>x.id===id);
-  if(!o){ window.location = '/dispatch/new-order?from='+id+'&redo=1'; return; }
+  const pq = problem ? '&problem=1' : '';
+  if(!o){ window.location = '/dispatch/new-order?from='+id+'&redo=1'+pq; return; }
   let box = document.getElementById('redoBox');
   if(!box){ box = document.createElement('div'); box.id = 'redoBox'; box.className = 'modalback'; document.body.appendChild(box); }
-  box.innerHTML = '<div class="modal panel"><h2>New order from '+ordBoth(o)+'</h2>'+
+  box.innerHTML = '<div class="modal panel"><h2>'+(problem?'New order for a problem with ':'New order from ')+ordBoth(o)+'</h2>'+
+    (problem ? '<div class="muted small">The new order starts blank except the customer name, phone and address.</div>' : '')+
+    (o.reorder_ok === false ? '<div class="small" style="border-left:4px solid #b54708;background:#fffaeb;color:#93370d;padding:6px 8px;margin:6px 0">Heads up: this order was delivered more than 15 minutes ago. You can still create a new one, but check with the customer first.</div>' : '')+
     '<label>Why is this going out again?</label><select id="redoWhy"><option value="">Pick a reason</option>'+
     REDO_REASONS.map(r=>'<option value="'+r[0]+'">'+r[1]+'</option>').join('')+'</select>'+
     '<input id="redoNote" placeholder="Detail, e.g. no side salad in the bag">'+
     '<label>Send the new order to</label>'+
     (o.driver_id ? '<label class="small"><input type="radio" name="redoTo" value="driver" checked> '+o.driver+' (original driver)</label>' : '')+
     '<label class="small"><input type="radio" name="redoTo" value="queue"'+(o.driver_id?'':' checked')+'> The queue (next driver up)</label>'+
-    '<div class="row"><button class="btn primary" onclick="redoGo('+id+')">Continue</button>'+
+    '<div class="row"><button class="btn primary" onclick="redoGo('+id+','+(problem?1:0)+')">Continue</button>'+
     '<button class="btn" onclick="document.getElementById(\'redoBox\').remove()">Cancel</button></div></div>';
 }
-function redoGo(id){
+function redoGo(id, problem){
   const why = document.getElementById('redoWhy').value;
   if(!why){ alert('Pick why this order is going out again.'); return; }
   const to = (document.querySelector('input[name=redoTo]:checked')||{}).value || 'queue';
   const note = document.getElementById('redoNote').value;
   window.location = '/dispatch/new-order?from='+id+'&redo=1&issue='+encodeURIComponent(why)+
-    '&issue_note='+encodeURIComponent(note)+'&send_to='+to;
+    '&issue_note='+encodeURIComponent(note)+'&send_to='+to+(problem?'&problem=1':'');
 }
 function payBlock(o){
   const p = o.drv_pay; if(!p || o.dispatch_status!=='delivered' || !o.driver_id) return '';
@@ -907,7 +910,8 @@ function renderCompleted(res){
         (res.drivers||[]).filter(d=>d.status==='online' && d.id!==o.driver_id)
           .map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('')+'</select>'+
         '<button class="btn tiny" onclick="moveToDriver('+o.id+')">Move order</button>' : '')+
-    (canReorder(o) ? '<button class="btn tiny primary" onclick="redoDialog('+o.id+')">New order from this</button>' : '')+
+    '<button class="btn tiny primary" onclick="redoDialog('+o.id+')">New order from this</button>'+
+    '<button class="btn tiny" onclick="redoDialog('+o.id+',1)">Problem order</button>'+
     (o.card_on_file ? '<button class="btn tiny" onclick="viewCard('+o.id+',\''+o.code+'\',\''+o.total+'\')">View card &bull;'+o.card_last4+'</button>' : '')+
 
     payBlock(o)+

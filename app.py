@@ -249,6 +249,14 @@ def reorder_closed(o):
     except Exception:
         return False
 
+def reorder_late_warning(o):
+    """Dispatch can still make a new order from an old one; this is the heads-up they see."""
+    if not reorder_closed(o):
+        return ""
+    return ("Heads up: %s was delivered more than %d minutes ago. You can still create this order, "
+            "but check with the customer that it's really needed." % ((_rv(o, "primary_no") or "").strip() or o["code"],
+                                                                     REORDER_WINDOW_MIN))
+
 def reorder_closed_msg(o):
     return ("It's been more than %d minutes since %s was delivered, so you can't make a new order from it. "
             "Create a new order instead." % (REORDER_WINDOW_MIN, o["code"]))
@@ -3097,7 +3105,7 @@ def new_code():
     src_id = payload.get("from_order_id")
     if src_id:
         src = db().execute("SELECT * FROM orders WHERE id=?", (src_id,)).fetchone()
-        if src and reorder_closed(src):
+        if src and reorder_closed(src) and not dispatcher_required():
             return jsonify({"ok": False, "error": reorder_closed_msg(src)}), 400
         if src:
             from_code = src["code"]
@@ -3117,7 +3125,7 @@ def new_code():
     src_id = payload.get("from_order_id")
     if src_id:
         src = db().execute("SELECT * FROM orders WHERE id=?", (src_id,)).fetchone()
-        if src and reorder_closed(src):
+        if src and reorder_closed(src) and not dispatcher_required():
             return jsonify({"ok": False, "error": reorder_closed_msg(src)}), 400
         if src:
             from_code = src["code"]
@@ -5692,7 +5700,7 @@ def checkout():
     src_id = payload.get("from_order_id")
     if src_id:
         src = db().execute("SELECT * FROM orders WHERE id=?", (src_id,)).fetchone()
-        if src and reorder_closed(src):
+        if src and reorder_closed(src) and not dispatcher_required():
             return jsonify({"ok": False, "error": reorder_closed_msg(src)}), 400
         if src:
             from_code = src["code"]
@@ -7824,9 +7832,7 @@ def dispatch_new_order():
     fid = request.args.get("from")
     if fid:
         o = db().execute("SELECT * FROM orders WHERE id=?", (fid,)).fetchone()
-        if o and reorder_closed(o):
-            flash(reorder_closed_msg(o))
-            return redirect(url_for("dispatch_new_order"))
+        late_warn = reorder_late_warning(o) if o else ""
         if o:
             src = {"id": o["id"], "code": o["code"], "restaurant_id": o["restaurant_id"],
                    "customer_name": o["customer_name"], "customer_phone": o["customer_phone"],
@@ -7838,6 +7844,17 @@ def dispatch_new_order():
                    "pay_method": _rv(o, "pay_method") or "",
                    "house_name": house_name_of(o),
                    "driver": (db().execute("SELECT name FROM drivers WHERE id=?", (o["driver_id"],)).fetchone() or {"name": ""})["name"] if o["driver_id"] else ""}
+            src["prev_no"] = ((_rv(o, "primary_no") or "").strip() or o["code"])
+            src["late_warning"] = late_warn
+            src["problem"] = bool(request.args.get("problem"))
+            if src["problem"]:
+                # a problem with the first order: start blank, keeping only who and where
+                src.update({"restaurant_id": None, "items": [], "tip_cents": 0, "fee_cents": 0,
+                            "address_note": "", "drop_style": "door", "dispatch_note": "",
+                            "pay_method": "", "house_name": ""})
+            # every reorder is paid on the house account, named for the order's brand
+            src["pay_method"] = "house_account"
+            src["house_name"] = payout_brand_name(o)
     oneoff = oneoff_id()
     multi_src = None
     mc = (request.args.get("multi") or "").strip().upper()

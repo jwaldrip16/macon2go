@@ -9,11 +9,14 @@
 </style>
 
 <a class="back" href="/dispatch">Back to board</a>
-<h1>{% if src %}New order from {{ src['code'] }}{% else %}Create an order{% endif %}</h1>
+<h1>{% if src and src['problem'] %}New order for a problem with {{ src['prev_no'] }}{% elif src %}New order from {{ src['code'] }}{% else %}Create an order{% endif %}</h1>
 {% for m in get_flashed_messages() %}<div class="panel" style="border-left:4px solid #b42318;color:#b42318">{{ m }}</div>{% endfor %}
 {% if src %}
-<div class="issuebar">Everything below is copied from {{ src['code'] }}. Change anything you need,
-  say what went wrong, then send it to the pending queue.</div>
+<div class="issuebar">Previous order: <b>{{ src['prev_no'] }}</b>{% if src['prev_no'] != src['code'] %} ({{ src['code'] }}){% endif %}.
+  {% if src['problem'] %}Only the customer's name, phone and address are filled in. Pick the restaurant and items,
+  say what went wrong, and choose the original driver or the queue.{% else %}Everything below is copied from it. Change anything you need,
+  say what went wrong, then send it to the pending queue.{% endif %}</div>
+{% if src['late_warning'] %}<div class="panel" style="border-left:4px solid #b54708;background:#fffaeb;color:#93370d">{{ src['late_warning'] }}</div>{% endif %}
 {% endif %}
 <div class="cols">
   <section>
@@ -480,7 +483,7 @@ function prefill(){
     if (qs.get('issue_note') && document.getElementById('issueNote')) document.getElementById('issueNote').value = qs.get('issue_note');
     if (qs.get('send_to') && document.getElementById('sendTo')) document.getElementById('sendTo').value = qs.get('send_to');
   } catch(e) {}
-  document.getElementById('rest').value = SRC.restaurant_id;
+  if (SRC.restaurant_id) document.getElementById('rest').value = SRC.restaurant_id;
   drawMenu();
   cart = SRC.items.map((i,x)=>Object.assign({}, i, {id: i.menu_item_id || ('c'+x)}));
   document.getElementById('name').value = SRC.customer_name || '';

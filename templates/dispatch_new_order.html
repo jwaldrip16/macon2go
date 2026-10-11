@@ -24,11 +24,13 @@
     <p class="small muted">One restaurant per order. For a second restaurant, place a separate order and link it below. The order minimum and delivery fee apply to each order, and it may go with a different driver, so the tip is per order.</p>
     {% if locked_brands %}<p class="small" style="color:#b42318">Locked brand, no orders until it's unlocked in Settings &gt; Regions &gt; Brand sites: {{ locked_brands|join(', ') }}</p>{% endif %}
     {% if locked_out %}<p class="small muted">Only restaurants in the regions you're assigned to are listed. Ask the owner to add you to another region.</p>{% endif %}
+    <input id="restSearch" type="search" autocomplete="off" placeholder="&#128269; Search businesses by name or address" oninput="restSearchType()" onkeydown="restSearchKey(event)">
+    <div id="restHits" class="srchhits hidden"></div>
     <select id="rest" onchange="drawMenu()">
       {% if rest_groups|length > 1 %}
-      {% for gp in rest_groups %}<optgroup label="{{ gp.label }}">{% for r in gp.rests %}<option value="{{ r['id'] }}">{{ r['name'] }}</option>{% endfor %}</optgroup>{% endfor %}
+      {% for gp in rest_groups %}<optgroup label="{{ gp.label }}">{% for r in gp.rests %}<option value="{{ r['id'] }}" data-addr="{{ r['address'] or '' }}">{{ r['name'] }}</option>{% endfor %}</optgroup>{% endfor %}
       {% else %}
-      {% for r in restaurants %}<option value="{{ r['id'] }}">{{ r['name'] }}</option>{% endfor %}
+      {% for r in restaurants %}<option value="{{ r['id'] }}" data-addr="{{ r['address'] or '' }}">{{ r['name'] }}</option>{% endfor %}
       {% endif %}
       <option value="{{ oneoff }}">Not on the list, type the pickup in</option>
     </select>
@@ -42,8 +44,15 @@
       <p class="muted small">The mileage fee prices off this address, the driver navigates to it
         and calls this number. Add the food as custom items on the right.</p>
     </div>
+    <input id="itemSearch" type="search" autocomplete="off" placeholder="&#128269; Search this menu, e.g. wings, fries" oninput="itemSearchType()" style="margin-top:8px">
     <div id="menu"></div>
   </section>
+  <style>
+    .srchhits{border:1px solid #ddd;border-radius:8px;margin:4px 0 8px;max-height:260px;overflow:auto;background:#fff}
+    .srchhits button{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-bottom:1px solid #eee;background:none;cursor:pointer;font:inherit}
+    .srchhits button:hover,.srchhits button.on{background:#eef4ff}
+    .srchhits .muted{padding:8px 10px}
+  </style>
   <aside class="panel">
     <h2>Order</h2>
     <div id="cart"><p class="muted">Nothing added yet.</p></div>
@@ -239,6 +248,46 @@ function drawMenu(){
   rebind(rid);
   draw();
 }
+function srchNorm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9 ]+/g,'').replace(/\s+/g,' ').trim(); }
+function srchHit(text, q){ const t = srchNorm(text); return srchNorm(q).split(' ').every(w=>!w || t.includes(w) || t.replace(/ /g,'').includes(w)); }
+let REST_HITS = [], REST_HIT_N = 0;
+function restSearchType(){
+  const q = document.getElementById('restSearch').value;
+  const box = document.getElementById('restHits');
+  if (!srchNorm(q)) { box.classList.add('hidden'); box.innerHTML=''; REST_HITS=[]; return; }
+  const sel = document.getElementById('rest');
+  REST_HITS = Array.from(sel.options).filter(o=>o.value !== String(ONEOFF_ID) && srchHit(o.textContent + ' ' + (o.dataset.addr||''), q)).slice(0, 30)
+    .map(o=>({id:o.value, name:o.textContent, addr:o.dataset.addr||'', group:(o.parentNode && o.parentNode.tagName==='OPTGROUP') ? o.parentNode.label : ''}));
+  REST_HIT_N = 0;
+  box.innerHTML = REST_HITS.length ? REST_HITS.map((r,k)=>'<button type="button" data-k="'+k+'" class="'+(k===0?'on':'')+'">'+ItemPickEsc(r.name)+
+      (r.group ? ' <span class="muted small">'+ItemPickEsc(r.group)+'</span>' : '')+
+      (r.addr ? '<div class="muted small">'+ItemPickEsc(r.addr)+'</div>' : '')+'</button>').join('')
+    : '<div class="muted small">No business name or address matches "'+ItemPickEsc(q)+'". Pick "Not on the list" below to type the pickup in.</div>';
+  box.classList.remove('hidden');
+  box.querySelectorAll('button[data-k]').forEach(b=>{ b.onclick = ()=>restSearchPick(parseInt(b.dataset.k,10)); });
+}
+function restSearchKey(ev){
+  if (!REST_HITS.length) return;
+  const btns = document.querySelectorAll('#restHits button[data-k]');
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    REST_HIT_N = (REST_HIT_N + (ev.key === 'ArrowDown' ? 1 : -1) + REST_HITS.length) % REST_HITS.length;
+    btns.forEach((b,k)=>b.classList.toggle('on', k===REST_HIT_N));
+    if (btns[REST_HIT_N]) btns[REST_HIT_N].scrollIntoView({block:'nearest'});
+  } else if (ev.key === 'Enter') { ev.preventDefault(); restSearchPick(REST_HIT_N); }
+  else if (ev.key === 'Escape') { document.getElementById('restHits').classList.add('hidden'); }
+}
+function restSearchPick(k){
+  const r = REST_HITS[k]; if (!r) return;
+  const sel = document.getElementById('rest');
+  if (sel.value !== r.id && cart.length && !confirm('Switch to '+r.name+'? The items already in this order will be cleared.')) return;
+  document.getElementById('restSearch').value = r.name;
+  document.getElementById('restHits').classList.add('hidden');
+  document.getElementById('itemSearch').value = '';
+  if (sel.value !== r.id) { sel.value = r.id; drawMenu(); }
+  document.getElementById('itemSearch').focus();
+}
+function itemSearchType(){ const rid = document.getElementById('rest').value; if (MENUS[rid]) rebind(rid); }
 const DTAB = {};
 function rebind(rid){
   // Same look as the customer website: section bar, photo cards, and the same pop-up for every item.
@@ -248,13 +297,18 @@ function rebind(rid){
   const tabs = [];
   items.forEach(it=>{ const t = (it.tab||'').trim() || 'Menu'; if (!tabs.includes(t)) tabs.push(t); });
   if (!tabs.includes(DTAB[rid])) DTAB[rid] = tabs[0];
+  const IQ = (document.getElementById('itemSearch')||{}).value || '';
+  const searching = !!srchNorm(IQ);
   const order = [], groups = {};
-  items.forEach((it,n)=>{ if (((it.tab||'').trim() || 'Menu') !== DTAB[rid]) return;
+  items.forEach((it,n)=>{
+    if (searching) { if (!srchHit([it.name, it.description, it.section, it.tab].join(' '), IQ)) return; }
+    else if (((it.tab||'').trim() || 'Menu') !== DTAB[rid]) return;
     const sec = (it.section||'').trim() || 'Menu'; if(!groups[sec]){ groups[sec]=[]; order.push(sec); } groups[sec].push(n); });
-  const tabbar = tabs.length > 1 ? '<nav class="menutabs">' + tabs.map((t,k)=>
+  if (searching && !order.length) { el.innerHTML = '<p class="muted">No items on this menu match "'+ItemPickEsc(IQ)+'". You can add it as a custom item on the right.</p>'; return; }
+  const tabbar = (tabs.length > 1 && !searching) ? '<nav class="menutabs">' + tabs.map((t,k)=>
       '<button type="button" data-tab="'+k+'" class="'+(t===DTAB[rid]?'on':'')+'">'+ItemPickEsc(t)+'</button>').join('') + '</nav>' : '';
   const slug = s => 'dsec-' + s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
-  const nav = order.length > 1 ? '<nav class="secnav">' + order.map(sec=>
+  const nav = (order.length > 1 && !searching) ? '<nav class="secnav">' + order.map(sec=>
       '<a href="#'+slug(sec)+'" data-jump="'+slug(sec)+'">'+ItemPickEsc(sec)+'</a>').join('') + '</nav>' : '';
   el.innerHTML = tabbar + nav + order.map(sec=>
     '<h3 class="sechead" id="'+slug(sec)+'">'+ItemPickEsc(sec)+'</h3><div class="mgrid">'+

@@ -14,6 +14,7 @@
   <div class="head"><h2>Menu</h2><button class="btn primary small" onclick="editItem(null,'')">Add an item</button></div>
   <p class="muted small">Click any item to change its photo, price, description, section or choices
     (sides, drinks, extra sauces). This is laid out the same way customers see it.</p>
+  <input id="itemSearch" type="search" autocomplete="off" placeholder="&#128269; Search this menu, e.g. wings, fries" oninput="draw()" style="margin:6px 0;width:100%;max-width:420px">
   <div id="tabBox"></div>
   <div id="menu"><p class="muted">Loading...</p></div>
 </div>
@@ -52,15 +53,20 @@ function draw(){
     (tabs.length ? '<p class="muted small">Showing the '+escH(ETAB)+' tab. Customers only see the tab bar once there are two or more tabs.'+
       (tabs.length>1 ? ' <button class="btn tiny" onclick="renameTab()">Rename this tab</button>' : '')+'</p>' : '');
   ETABS = tabs;
+  const IQ = String((document.getElementById('itemSearch')||{}).value||'').toLowerCase().replace(/[^a-z0-9 ]+/g,'').trim();
+  const IW = IQ.split(/\s+/).filter(Boolean);
   const order = [], groups = {};
   DATA.items.forEach(it=>{
-    if (((it.tab||'').trim() || 'Menu') !== ETAB) return;
+    if (IW.length) {
+      const t = [it.name, it.description, it.section, it.tab].join(' ').toLowerCase().replace(/[^a-z0-9 ]+/g,'');
+      if (!IW.every(w=>t.includes(w) || t.replace(/ /g,'').includes(w))) return;
+    } else if (((it.tab||'').trim() || 'Menu') !== ETAB) return;
     const sec = it.section || 'Menu';
     if (!groups[sec]){ groups[sec] = []; order.push(sec); }
     groups[sec].push(it);
   });
   const el = document.getElementById('menu');
-  if (!order.length){ el.innerHTML = '<p class="muted">No items yet. Add one above.</p>'; return; }
+  if (!order.length){ el.innerHTML = IW.length ? '<p class="muted">No items match "'+escH(IQ)+'".</p>' : '<p class="muted">No items yet. Add one above.</p>'; return; }
   el.innerHTML = order.map((s,ix)=>
     '<div class="sechead edsec"><span>'+escH(s)+secAvailTag(groups[s])+'</span><span>'+
     (ix>0 ? '<button class="btn tiny" onclick="moveSection(\''+escH(s).replace(/\\/g,'\\\\')+'\',\'up\')">Move up</button> ' : '')+

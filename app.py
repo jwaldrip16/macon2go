@@ -6002,7 +6002,7 @@ TRACK_FIELDS = ("code", "primary_no", "multi_group", "note", "credits", "dispatc
                 "scheduled_label", "needs_address_approval", "timeline", "timer_seconds",
                 "queue_position", "hold_reason", "miles", "subtotal", "fee", "service", "service_cents",
                 "tax", "tip", "total", "delivered_time", "lines", "uses_app", "manual_state",
-                "gift", "reward", "due", "confirm_call")
+                "gift", "reward", "due", "confirm_call", "swap_note")
 TRACK_AVG_MPH = 25.0       # town driving speed used for the customer's rough arrival time
 TRACK_FIX_FRESH_MIN = 10   # an older GPS fix is not shown to the customer
 ETA_STOP_MIN = 5           # minutes added for each stop a driver makes before this one
@@ -6194,6 +6194,14 @@ def track_payload(o):
     """What the public tracking page may see. Card, signature, phone and dispatch-only
     fields stay off it, since anyone with the order code can open this page."""
     full = order_dict(o)
+    try:
+        sw = db().execute("SELECT from_rest,to_rest,at FROM order_swaps WHERE order_id=? ORDER BY id DESC LIMIT 1",
+                          (o["id"],)).fetchone()
+        if sw:
+            full["swap_note"] = "Your pickup moved from " + (sw["from_rest"] or "another location") + \
+                                " to " + (sw["to_rest"] or "?") + "."
+    except Exception:
+        pass
     out = {k: full.get(k) for k in TRACK_FIELDS}
     st = o["dispatch_status"]
     r = db().execute("SELECT * FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
@@ -7844,6 +7852,7 @@ def api_order_edit():
             if _cur != _new:
                 return jsonify({"ok": False, "error": "Swaps are only between locations with the same name."}), 400
             old_no = (o["primary_no"] if "primary_no" in o.keys() else "") or ""
+            snap = dict(o)
             try:
                 mi = round(haversine_miles(nr["lat"], nr["lng"], o["lat"], o["lng"]) * ROAD_FACTOR, 2) \
                      if (nr["lat"] is not None and o["lat"] is not None) else (o["miles"] or 0)
@@ -7873,6 +7882,29 @@ def api_order_edit():
                 # instead of waiting out the rest of the swap window.
                 release_to_kitchen(o, "dispatch (swap confirmed)")
                 swap_msg += " Sent to the kitchen right away since the swap is confirmed."
+            # closed copy of the order as it was at the old location, kept for the record
+            _sw = dict(snap)
+            _sw.pop("id", None)
+            _base = _sw["code"] + "-SW"
+            _sw["code"], _k = _base, 0
+            while db().execute("SELECT 1 FROM orders WHERE code=?", (_sw["code"],)).fetchone():
+                _k += 1
+                _sw["code"] = _base + str(_k)
+            _sw["dispatch_status"] = "cancelled"
+            _sw["issue"] = "Swapped to another location"
+            _sw["issue_note"] = "Pickup moved to " + nr["name"] + \
+                                (", restaurant order number " + new_no if new_no else ", order " + o["code"])
+            _sw["driver_id"] = None
+            _sw["stack_seq"] = None
+            _sw["kitchen_status"] = "pending"
+            _sw["kitchen_go"] = 0
+            _sw["kitchen_sent_at"] = None
+            _sw["token"] = None
+            _sw["delivered_at"] = None
+            _sw["auto_kitchen_at"] = None
+            _sw["auto_kitchen_ready_at"] = None
+            db().execute("INSERT INTO orders (%s) VALUES (%s)" % (", ".join(_sw.keys()), ", ".join(["?"] * len(_sw))),
+                         tuple(_sw.values()))
             db().execute("""INSERT INTO order_swaps (order_id,order_code,from_rest,to_rest,old_no,new_no,by,at)
                             VALUES (?,?,?,?,?,?,?,?)""",
                          (o["id"], o["code"], (cr["name"] if cr else ""), nr["name"], old_no, new_no,

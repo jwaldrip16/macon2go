@@ -904,16 +904,18 @@ async function checkPay(id){
   if (!res.ok) alert(res.error||'Could not check right now.');
   board(true);
 }
+function swpOrder(o){ return !!(o.issue && String(o.issue).indexOf('Swapped to another location')===0); }
 function renderCompleted(res){
   try {
   document.getElementById('completed').innerHTML = (res.completed||[]).map(o=>
     '<div class="order"><div class="order-head"><strong>'+esc(ordMain(o))+'</strong>'+(ordSub(o) ? ' <span class="muted small">'+esc(ordSub(o))+'</span>' : '')+' '+refPill(o)+tokenPill(o)+'<span class="pill '+
-    (o.dispatch_status==='delivered'?'green':'grey')+'">'+o.dispatch_status+'</span> '+
+    (swpOrder(o) ? '<span class="pill amber">swapped</span> '
+                 : '<span class="pill '+(o.dispatch_status==='delivered'?'green':'grey')+'">'+o.dispatch_status+'</span> ')+
     '<span class="muted small">'+(o.delivered_time || (o.delivered_at||'').replace('T',' '))+'</span></div>'+
     restLine(o)+
     '<div class="order-actions">'+
       OrderView.btn(o)+
-      reopenButtons(o)+
+      (swpOrder(o)?'':reopenButtons(o))+
       (IS_OWNER ? '<button class="btn tiny danger" onclick="deleteOrders(['+o.id+'],\''+o.code+'\')">Delete</button>' : '')+
       (!o.driver_id && o.dispatch_status!=='cancelled' ? '<select class="sendsel" id="sd'+o.id+'">'+
         '<option value="">Next up</option>'+ (res.drivers||[]).filter(d=>d.status==='online')
@@ -924,7 +926,7 @@ function renderCompleted(res){
         (res.drivers||[]).filter(d=>d.status==='online' && d.id!==o.driver_id)
           .map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('')+'</select>'+
         '<button class="btn tiny" onclick="moveToDriver('+o.id+')">Move order</button>' : '')+
-    '<button class="btn tiny primary" onclick="redoDialog('+o.id+',1)">Problem order</button>'+
+    (swpOrder(o)?'':'<button class="btn tiny primary" onclick="redoDialog('+o.id+',1)">Problem order</button>')+
     (o.card_on_file ? '<button class="btn tiny" onclick="viewCard('+o.id+',\''+o.code+'\',\''+o.total+'\')">View card &bull;'+o.card_last4+'</button>' : '')+
 
     payBlock(o)+

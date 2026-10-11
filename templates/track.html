@@ -178,6 +178,7 @@ async function tick(){
                  ['On the way', ['enroute','delivered'].includes(o.dispatch_status)],
                  ['Delivered', o.dispatch_status==='delivered']];
   let html = '<h2>'+o.restaurant+'</h2><p class="muted">'+o.address+'</p>';
+  if (o.swap_note) html += '<p class="small" style="border-left:4px solid #E8590C;padding:4px 8px;margin:6px 0">'+o.swap_note+'</p>';
   // each step carries the time it actually happened, so the customer can quote it back
   const at = {};
   (o.timeline||[]).forEach(t=>{ at[t.kind+':'+t.status] = t.time; });

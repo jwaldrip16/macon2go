@@ -6,7 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Tracker">
 <link rel="apple-touch-icon" href="/brand/icon-192.png">
-<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(function(){});}</script>
+<script>
+function fmtPhone(p){ const d = String(p||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
+  return d.length===10 ? '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6) : String(p||'').replace(/[<>&"]/g,''); }
+function telOf(p){ return String(p||'').replace(/[^0-9+]/g,''); }
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scope:"/"}).catch(function(){});}</script>
 {% endblock %}{% block body %}
 <div class="head"><h1>Driver map</h1>
   <div><a class="btn small" href="/dispatch">Board</a>
@@ -115,7 +119,8 @@ async function refresh(){
     rows.push('<div class="row between"><div><strong>'+d.name+'</strong> '+
       '<span class="pill '+(d.status==='online'?'green':d.status==='break'?'amber':'grey')+'">'+d.status+'</span></div>'+
       '<span>'+(d.location ? '<button type="button" class="btn tiny'+(FOLLOW===d.id?' primary':'')+'" onclick="mapDriver('+d.id+')">Map</button> ' : '')+
-      '<a class="btn tiny" href="tel:'+d.phone+'">Call</a></span></div>');
+      (d.phone ? '<a class="btn tiny" href="tel:'+telOf(d.phone)+'">Call</a>' : '')+'</span></div>');
+    rows.push('<div class="small">'+(d.phone ? '&#128222; <a href="tel:'+telOf(d.phone)+'"><b>'+fmtPhone(d.phone)+'</b></a>' : '<span class="muted">No phone on file</span>')+'</div>');
     if(d.location){
       const age = d.location.minutes_ago===null ? 'just now'
         : (d.location.minutes_ago<1 ? 'seconds ago' : d.location.minutes_ago+' min ago');
@@ -126,7 +131,8 @@ async function refresh(){
         d.next_stop.target+(d.next_stop.miles_away!==null?(' · '+d.next_stop.miles_away+' mi out'):'')+'</div>');
       const color = d.location.stale ? '#8b93a1' : (d.status==='online' ? '#168c50'
         : d.status==='break' ? '#bf7e0a' : '#1e58c8');
-      const pop = '<strong>'+d.name+'</strong><br>'+d.status+
+      const pop = '<strong>'+d.name+'</strong><br>'+
+        (d.phone ? '<a href="tel:'+telOf(d.phone)+'">'+fmtPhone(d.phone)+'</a><br>' : '')+d.status+
         (d.location.address ? ('<br>'+d.location.address) : '')+
         (d.next_stop ? ('<br>next: '+d.next_stop.code) : '')+'<br>'+age;
       const ll = [d.location.lat, d.location.lng];

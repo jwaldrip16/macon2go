@@ -7828,6 +7828,8 @@ def api_order_edit():
                          (nr["id"], nr["name"], nr["address"], nr["phone"], nr["lat"], nr["lng"], mi, o["id"]))
             db().execute("""UPDATE orders SET kitchen_sent_at=NULL, auto_kitchen_at=NULL, kitchen_go=1
                             WHERE id=? AND kitchen_status='pending'""", (o["id"],))
+            _in_window = (o["kitchen_status"] == "waiting" and not o["auto_kitchen_at"]
+                          and o["auto_kitchen_ready_at"])
             db().execute("""UPDATE orders SET auto_kitchen_ready_at=NULL WHERE id=?
                             AND kitchen_status='waiting' AND auto_kitchen_at IS NULL""", (o["id"],))
             o = db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone()
@@ -7835,6 +7837,11 @@ def api_order_edit():
             swap_msg = "Moved to " + nr["name"] + " for pickup" + \
                        (", %.1f mi from the customer now" % mi if mi else "") + \
                        ". Delivery fee is unchanged."
+            if _in_window:
+                # Dispatch confirmed the swap, so the order goes to the kitchen right away
+                # instead of waiting out the rest of the swap window.
+                release_to_kitchen(o, "dispatch (swap confirmed)")
+                swap_msg += " Sent to the kitchen right away since the swap is confirmed."
             log("order_swap", rest_ord_no(o) + " moved to " + nr["name"] + " by " + (session.get("dispatcher_name") or "dispatch"))
     new_fee_from_address = None
     if "address" in data:

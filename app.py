@@ -6904,6 +6904,11 @@ def api_driver_status():
     _dv = db().execute("SELECT name, active FROM drivers WHERE id=?", (did,)).fetchone()
     if status != "offline" and not business_is_open():
         return jsonify({"ok": False, "error": "The business is closed. Open the business first, then put drivers online."}), 400
+    if status != "offline":
+        _shut = driver_brands_closed(did)
+        if _shut:
+            return jsonify({"ok": False, "error": _shut + " is outside its hours right now. Drivers can go online "
+                            "30 minutes before it opens."}), 400
     if _dv and status != "offline" and not (_dv["active"] if _dv["active"] is not None else 1):
         return jsonify({"ok": False, "error": _dv["name"] + " is inactive. Make them active on the Drivers page first."}), 400
     msg = "Dispatch set you " + status + "."
@@ -16276,10 +16281,76 @@ def auto_business_window(when=None):
             return True
     return False if have else None
 
+def brand_windows(when=None):
+    """{brand id: True/False} for each brand (Tiger Town To Go, Crimson 2 Go, Bulldawg Food...):
+    True from 30 minutes before any of its regions opens until the last one closes, by each
+    region's own hours and time zone. Brands with no hours set are left out. 0 = regions not
+    tied to a brand."""
+    when = when or dt.datetime.now()
+    try:
+        hidden = board_hidden_regions()
+    except Exception:
+        hidden = set()
+    lead = when + dt.timedelta(minutes=AUTO_BIZ_LEAD_MIN)
+    out = {}
+    for r in db().execute("SELECT id, COALESCE(site_id,0) sid FROM regions").fetchall():
+        rid, sid = r["id"], int(r["sid"] or 0)
+        if rid in hidden or not business_hours(rid):
+            continue
+        out[sid] = out.get(sid, False) or business_in_hours(when, rid) or business_in_hours(lead, rid)
+    return out
+
+def driver_brands_closed(did, wins=None):
+    """Brand names when every brand this driver works for is outside its hours, else ''.
+    A driver with no region, or in a brand with no hours set, is never blocked here."""
+    if not auto_business_on():
+        return ""
+    wins = brand_windows() if wins is None else wins
+    sids = driver_site_ids(did)
+    if not sids or any(sid not in wins or wins[sid] for sid in sids):
+        return ""
+    names = []
+    for sid in sorted(sids):
+        st_ = site_by_id(sid) if sid else None
+        names.append((st_["name"] if st_ else "") or main_brand_name())
+    return " and ".join(dict.fromkeys(names))
+
+def auto_brand_close(when=None):
+    """Each brand closes at its own closing time: its drivers go offline then, even while
+    another brand is still open. Acts only when a brand's hours end. Returns brand ids closed."""
+    wins = brand_windows(when)
+    try:
+        last = json.loads(setting("auto_brand_window", str) or "{}")
+    except Exception:
+        last = {}
+    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('auto_brand_window',?)",
+                 (json.dumps({str(k): (1 if v else 0) for k, v in wins.items()}),))
+    db().commit()
+    ended = [sid for sid, v in wins.items() if not v and last.get(str(sid)) == 1]
+    if not ended:
+        return []
+    for d in db().execute("SELECT id, name FROM drivers WHERE COALESCE(status,'offline')!='offline'").fetchall():
+        names = driver_brands_closed(d["id"], wins)
+        if not names or not (driver_site_ids(d["id"]) & set(ended)):
+            continue
+        try:
+            set_driver_status(d["id"], "offline", names + " is closed for the day, so you are offline now.")
+        except Exception as e:
+            print("brand close: driver offline skipped", d["id"], e)
+    for sid in ended:
+        st_ = site_by_id(sid) if sid else None
+        log("business", ((st_["name"] if st_ else "") or main_brand_name()) + " closed automatically at its closing time")
+    db().commit()
+    return ended
+
 def auto_business_tick(when=None):
     """Open or close when the hours window starts or ends. Returns 'opened', 'closed' or ''."""
     if not auto_business_on():
         return ""
+    try:
+        auto_brand_close(when)
+    except Exception as e:
+        print("brand close skipped:", e)
     win = auto_business_window(when)
     if win is None:
         return ""

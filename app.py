@@ -7328,6 +7328,22 @@ def release_to_kitchen(o, who):
     log("order", o["code"] + (" sent to the kitchen by " if order_uses_app(o) else " released to call in by ") + who)
 
 
+def _has_swap_target(o):
+    """Another location with the same name the order could swap to (no swap window needed otherwise)."""
+    r = db().execute("SELECT id, name FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+    if not r:
+        return False
+    tok = re.sub(r"[^a-z0-9]+", "", (r["name"] or "").split(" ")[0].lower())
+    if not tok:
+        return False
+    for cand in db().execute("SELECT id, name, region_id FROM restaurants WHERE slug!='oneoff'").fetchall():
+        if cand["id"] == o["restaurant_id"] or restaurant_locked(cand):
+            continue
+        if re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower()) == tok:
+            return True
+    return False
+
+
 def auto_kitchen_sweep():
     """Regions with automatic Send to kitchen: release each placed order once it could be sent
     by hand (paid or cash, address approved, not a future order, new-customer call done).
@@ -7346,9 +7362,10 @@ def auto_kitchen_sweep():
         return 0
     for o in rows:
         dl = int(o["kitchen_delay_min"] or 0)
-        if dl > 0:
+        if dl > 0 and _has_swap_target(o):
             # swap window: hold the order dl minutes after it first qualified, so dispatch
-            # can swap it to another restaurant before the kitchen sees it.
+            # can swap it to another restaurant before the kitchen sees it. Nowhere to
+            # swap to? The order goes straight out, no window.
             if not o["auto_kitchen_ready_at"]:
                 db().execute("UPDATE orders SET auto_kitchen_ready_at=? WHERE id=?", (now(), o["id"]))
                 continue

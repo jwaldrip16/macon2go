@@ -910,8 +910,7 @@ function renderCompleted(res){
         (res.drivers||[]).filter(d=>d.status==='online' && d.id!==o.driver_id)
           .map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('')+'</select>'+
         '<button class="btn tiny" onclick="moveToDriver('+o.id+')">Move order</button>' : '')+
-    '<button class="btn tiny primary" onclick="redoDialog('+o.id+')">New order from this</button>'+
-    '<button class="btn tiny" onclick="redoDialog('+o.id+',1)">Problem order</button>'+
+    '<button class="btn tiny primary" onclick="redoDialog('+o.id+',1)">Problem order</button>'+
     (o.card_on_file ? '<button class="btn tiny" onclick="viewCard('+o.id+',\''+o.code+'\',\''+o.total+'\')">View card &bull;'+o.card_last4+'</button>' : '')+
 
     payBlock(o)+

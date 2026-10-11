@@ -24,9 +24,14 @@
     <p class="small muted">One restaurant per order. For a second restaurant, place a separate order and link it below. The order minimum and delivery fee apply to each order, and it may go with a different driver, so the tip is per order.</p>
     {% if locked_brands %}<p class="small" style="color:#b42318">Locked brand, no orders until it's unlocked in Settings &gt; Regions &gt; Brand sites: {{ locked_brands|join(', ') }}</p>{% endif %}
     {% if locked_out %}<p class="small muted">Only restaurants in the regions you're assigned to are listed. Ask the owner to add you to another region.</p>{% endif %}
-    <input id="restSearch" type="search" autocomplete="off" placeholder="&#128269; Search businesses by name or address" oninput="restSearchType()" onkeydown="restSearchKey(event)">
+    <div class="srchrow">
+      <label class="small">Business<input id="restSearch" type="search" autocomplete="off" placeholder="&#128269; Name or address" oninput="restSearchType()" onkeydown="restSearchKey(event)"></label>
+      <label class="small">Item<input id="itemSearch" type="search" autocomplete="off" placeholder="&#128269; e.g. wings, cheese dip" oninput="itemSearchType()" onkeydown="itemSearchKey(event)"></label>
+    </div>
     <div id="restHits" class="srchhits hidden"></div>
-    <select id="rest" onchange="drawMenu()">
+    <div id="itemHits" class="srchhits hidden"></div>
+    <p class="small muted" id="itemScope" style="margin:2px 0 8px">Item search looks through every business until you pick one, then just that business's menu.</p>
+    <select id="rest" onchange="BIZ_PICKED=true;itemSearchType();drawMenu()">
       {% if rest_groups|length > 1 %}
       {% for gp in rest_groups %}<optgroup label="{{ gp.label }}">{% for r in gp.rests %}<option value="{{ r['id'] }}" data-addr="{{ r['address'] or '' }}">{{ r['name'] }}</option>{% endfor %}</optgroup>{% endfor %}
       {% else %}
@@ -44,7 +49,6 @@
       <p class="muted small">The mileage fee prices off this address, the driver navigates to it
         and calls this number. Add the food as custom items on the right.</p>
     </div>
-    <input id="itemSearch" type="search" autocomplete="off" placeholder="&#128269; Search this menu, e.g. wings, fries" oninput="itemSearchType()" style="margin-top:8px">
     <div id="menu"></div>
   </section>
   <style>
@@ -52,6 +56,9 @@
     .srchhits button{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-bottom:1px solid #eee;background:none;cursor:pointer;font:inherit}
     .srchhits button:hover,.srchhits button.on{background:#eef4ff}
     .srchhits .muted{padding:8px 10px}
+    .srchrow{display:flex;gap:8px;flex-wrap:wrap}
+    .srchrow label{flex:1 1 220px;display:flex;flex-direction:column;gap:2px}
+    .srchrow input{width:100%}
   </style>
   <aside class="panel">
     <h2>Order</h2>
@@ -254,7 +261,7 @@ let REST_HITS = [], REST_HIT_N = 0;
 function restSearchType(){
   const q = document.getElementById('restSearch').value;
   const box = document.getElementById('restHits');
-  if (!srchNorm(q)) { box.classList.add('hidden'); box.innerHTML=''; REST_HITS=[]; return; }
+  if (!srchNorm(q)) { box.classList.add('hidden'); box.innerHTML=''; REST_HITS=[]; BIZ_PICKED=false; scopeNote(); return; }
   const sel = document.getElementById('rest');
   REST_HITS = Array.from(sel.options).filter(o=>o.value !== String(ONEOFF_ID) && srchHit(o.textContent + ' ' + (o.dataset.addr||''), q)).slice(0, 30)
     .map(o=>({id:o.value, name:o.textContent, addr:o.dataset.addr||'', group:(o.parentNode && o.parentNode.tagName==='OPTGROUP') ? o.parentNode.label : ''}));
@@ -283,11 +290,73 @@ function restSearchPick(k){
   if (sel.value !== r.id && cart.length && !confirm('Switch to '+r.name+'? The items already in this order will be cleared.')) return;
   document.getElementById('restSearch').value = r.name;
   document.getElementById('restHits').classList.add('hidden');
-  document.getElementById('itemSearch').value = '';
-  if (sel.value !== r.id) { sel.value = r.id; drawMenu(); }
+  BIZ_PICKED = true;
+  if (sel.value !== r.id) { sel.value = r.id; drawMenu(); } else { itemSearchType(); }
+  scopeNote();
   document.getElementById('itemSearch').focus();
 }
-function itemSearchType(){ const rid = document.getElementById('rest').value; if (MENUS[rid]) rebind(rid); }
+let BIZ_PICKED = false, ITEM_HITS = [], ITEM_HIT_N = 0, ITEM_T = null, ITEM_SEQ = 0;
+function scopeNote(){
+  const sel = document.getElementById('rest'), op = sel.options[sel.selectedIndex];
+  document.getElementById('itemScope').textContent = BIZ_PICKED && op
+    ? 'Item search is looking in ' + op.textContent + '. Clear the Business box to search every business.'
+    : 'Item search looks through every business until you pick one, then just that business\'s menu.';
+}
+function itemSearchType(){
+  const q = document.getElementById('itemSearch').value;
+  const box = document.getElementById('itemHits');
+  const rid = document.getElementById('rest').value;
+  if (BIZ_PICKED || !srchNorm(q)) {
+    box.classList.add('hidden'); box.innerHTML = ''; ITEM_HITS = [];
+    if (MENUS[rid]) rebind(rid);
+    return;
+  }
+  clearTimeout(ITEM_T);
+  const seq = ++ITEM_SEQ;
+  ITEM_T = setTimeout(async ()=>{
+    let j = null;
+    try { j = await (await fetch('/api/dispatch/item-search?q=' + encodeURIComponent(q), {credentials:'same-origin'})).json(); } catch(e) {}
+    if (seq !== ITEM_SEQ) return;
+    const mine = new Set(Array.from(document.getElementById('rest').options).map(o=>o.value));
+    ITEM_HITS = ((j && j.items) || []).filter(it=>mine.has(String(it.restaurant_id))).slice(0, 40);
+    ITEM_HIT_N = 0;
+    box.innerHTML = ITEM_HITS.length ? ITEM_HITS.map((it,k)=>'<button type="button" data-k="'+k+'" class="'+(k===0?'on':'')+'"><strong>'+
+        ItemPickEsc(it.name)+'</strong> '+money(it.price_cents)+'<div class="muted small">'+ItemPickEsc(it.restaurant)+
+        (it.address ? ' · '+ItemPickEsc(it.address) : '')+'</div></button>').join('')
+      : '<div class="muted small">No item on any menu matches "'+ItemPickEsc(q)+'".</div>';
+    box.classList.remove('hidden');
+    box.querySelectorAll('button[data-k]').forEach(b=>{ b.onclick = ()=>itemSearchPick(parseInt(b.dataset.k,10)); });
+  }, 200);
+}
+function itemSearchKey(ev){
+  if (BIZ_PICKED || !ITEM_HITS.length) return;
+  const btns = document.querySelectorAll('#itemHits button[data-k]');
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    ITEM_HIT_N = (ITEM_HIT_N + (ev.key === 'ArrowDown' ? 1 : -1) + ITEM_HITS.length) % ITEM_HITS.length;
+    btns.forEach((b,k)=>b.classList.toggle('on', k===ITEM_HIT_N));
+    if (btns[ITEM_HIT_N]) btns[ITEM_HIT_N].scrollIntoView({block:'nearest'});
+  } else if (ev.key === 'Enter') { ev.preventDefault(); itemSearchPick(ITEM_HIT_N); }
+  else if (ev.key === 'Escape') { document.getElementById('itemHits').classList.add('hidden'); }
+}
+function itemSearchPick(k){
+  const it = ITEM_HITS[k]; if (!it) return;
+  const sel = document.getElementById('rest'), rid = String(it.restaurant_id);
+  if (sel.value !== rid && cart.length && !confirm('Switch to '+it.restaurant+'? The items already in this order will be cleared.')) return;
+  BIZ_PICKED = true;
+  document.getElementById('restSearch').value = it.restaurant;
+  document.getElementById('itemHits').classList.add('hidden');
+  if (sel.value !== rid) { sel.value = rid; drawMenu(); }
+  scopeNote();
+  loadMenu(rid).then(items=>{
+    if (!items || document.getElementById('rest').value !== rid) return;
+    rebind(rid); draw();
+    const i = items.find(x=>String(x.id) === String(it.id));
+    if (!i) return;
+    if (!Avail.ok(i, dWhen()) && !confirm(i.name+' is only available '+i.avail_label+'. Customers cannot order it right now. Add it anyway?')) return;
+    ItemPick.open(i, line=>{ cart.push(Object.assign({id:'m'+i.id+'-'+Date.now(), fee_cents:0}, line)); draw(); });
+  });
+}
 const DTAB = {};
 function rebind(rid){
   // Same look as the customer website: section bar, photo cards, and the same pop-up for every item.
@@ -298,7 +367,7 @@ function rebind(rid){
   items.forEach(it=>{ const t = (it.tab||'').trim() || 'Menu'; if (!tabs.includes(t)) tabs.push(t); });
   if (!tabs.includes(DTAB[rid])) DTAB[rid] = tabs[0];
   const IQ = (document.getElementById('itemSearch')||{}).value || '';
-  const searching = !!srchNorm(IQ);
+  const searching = BIZ_PICKED && !!srchNorm(IQ);
   const order = [], groups = {};
   items.forEach((it,n)=>{
     if (searching) { if (!srchHit([it.name, it.description, it.section, it.tab].join(' '), IQ)) return; }

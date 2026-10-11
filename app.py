@@ -7905,6 +7905,34 @@ def dispatch_new_order():
                            reasons=[{"key": k, "label": v} for k, v in REDO_REASONS.items()])
 
 
+@app.get("/api/dispatch/item-search")
+def api_dispatch_item_search():
+    """New order > Item search with no business picked: matching items across every business's menu.
+    The page only shows results for businesses in its own business list (the dispatcher's regions)."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 401
+    q = re.sub(r"[^a-z0-9 ]+", "", (request.args.get("q") or "").lower())
+    words = [w for w in q.split() if w]
+    if not words:
+        return jsonify({"ok": True, "items": []})
+    rows = db().execute("""SELECT i.id, i.name, i.description, i.section, i.menu_tab, i.price_cents, i.restaurant_id,
+                                  r.name AS rname, r.address AS raddr
+                           FROM menu_items i JOIN restaurants r ON r.id=i.restaurant_id
+                           WHERE i.active=1 AND (LOWER(i.name) LIKE ? OR LOWER(COALESCE(i.description,'')) LIKE ?
+                                 OR LOWER(COALESCE(i.section,'')) LIKE ? OR LOWER(COALESCE(i.menu_tab,'')) LIKE ?)
+                           ORDER BY r.name, i.sort, i.id LIMIT 2000""",
+                        tuple(["%" + words[0][:3] + "%"] * 4)).fetchall()
+    out = []
+    for it in rows:
+        t = re.sub(r"[^a-z0-9 ]+", "", " ".join(str(it[k] or "") for k in ("name", "description", "section", "menu_tab")).lower())
+        if all(w in t or w in t.replace(" ", "") for w in words):
+            out.append({"id": it["id"], "name": it["name"], "price_cents": int(it["price_cents"] or 0),
+                        "section": it["section"] or "", "restaurant_id": it["restaurant_id"],
+                        "restaurant": it["rname"] or "", "address": it["raddr"] or ""})
+            if len(out) >= 60:
+                break
+    return jsonify({"ok": True, "items": out})
+
 @app.get("/api/dispatch/menu/<int:rid>")
 def api_dispatch_menu(rid):
     """One restaurant's menu for the Create order screen, fetched when it is picked."""

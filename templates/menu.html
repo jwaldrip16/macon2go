@@ -68,7 +68,7 @@
       <select id="whenDay" class="hidden" onchange="drawSlots()" style="max-width:160px"></select>
       <select id="whenTime" class="hidden" style="max-width:130px"></select>
     </div>
-    <div class="muted small" id="whenNote">{{ '' if open else ('We are closed right now. You can still schedule your order for later.' if not biz_open else ('Orders from restaurants we don\'t list are taken ' + any_rest_label() + '. Pick a time inside those hours.' if custom else r['name'] + ' is closed right now. Pick a time they are open and we will send it to them then.')) }}</div>
+    <div class="muted small" id="whenNote">{{ '' if open else (('Orders are paused right now' + (': ' + pause_reason if pause_reason else '') + '. You can still schedule your order for tomorrow or later.') if region_paused else ('We are closed right now. You can still schedule your order for later.' if not biz_open else ('Orders from restaurants we don\'t list are taken ' + any_rest_label() + '. Pick a time inside those hours.' if custom else r['name'] + ' is closed right now. Pick a time they are open and we will send it to them then.'))) }}</div>
     <h3>Tip your driver</h3>
     <div class="row" id="tipRow">
       <button class="btn tiny" onclick="setTip(0.15)">15%</button>

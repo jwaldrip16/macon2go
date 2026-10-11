@@ -922,15 +922,40 @@ function renderCompleted(res){
 let SHOW_ALL_REGIONS = false;
 let RGQ_OPEN = {};
 async function pauseRegion(id, on, name){
-  if (on && !confirm('Pause ' + name + '? Customers can\'t order from its restaurants, and orders already placed there hold in the queue until you resume it.')) return;
-  const r = await jpost('/api/dispatch/pause-region', {region_id: id, paused: on});
+  let reason = '';
+  if (on){
+    const a = prompt('Pausing ' + name + '. Why? Customers see this on the website (optional).');
+    if (a === null) return;
+    reason = a;
+  }
+  const r = await jpost('/api/dispatch/pause-region', {region_id: id, paused: on, reason: reason});
   if (!r.ok){ alert(r.error || 'Could not change that region.'); return; }
+  board(true);
+}
+async function pauseBrand(sid, on, name){
+  let reason = '';
+  if (on){
+    const a = prompt('Pausing every region of ' + name + '. Why? Customers see this on the website (optional).');
+    if (a === null) return;
+    reason = a;
+    if (!confirm('Pause ' + name + '? Customers can\'t order from its restaurants, and orders already placed hold in the queue until you resume it. Future orders for tomorrow and later still go through, and resuming the brand lets customers order again right away.')) return;
+  }
+  const r = await jpost('/api/dispatch/pause-brand', {site_id: sid, paused: on, reason: reason});
+  if (!r.ok){ alert(r.error || 'Could not change that brand.'); return; }
+  ffToast(name + (on ? ' paused. Future orders for tomorrow and later still go through.' : ' resumed. Customers can order again.'));
   board(true);
 }
 function drawRegionQueues(res){
   const box = document.getElementById('rgQueues'); if(!box) return;
   const qs = res.region_queues || [];
-  if (qs.length < 2 && !(qs[0] && qs[0].id)){ box.innerHTML = ''; return; }
+  const brands = (res.brands || []).filter(b=>b.regions && b.regions.length);
+  const brandRow = brands.length ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin:0 0 8px">' +
+    '<span class="muted small">Pause a whole brand:</span>' + brands.map(b =>
+      '<button class="btn tiny' + (b.all_paused ? '' : ' danger') + '" onclick="pauseBrand(' + b.site_id + ',' + (b.all_paused ? 'false' : 'true') + ',\'' + esc(b.name).replace(/'/g, "\\'") + '\')">' +
+      (b.all_paused ? 'Resume' : 'Pause') + ' ' + esc(b.name) + '</button>' +
+      (b.all_paused && (b.reason || b.by) ? ' <span class="muted small">' + esc([b.by && 'by ' + b.by, b.reason].filter(Boolean).join(', ')) + '</span>' : '')
+    ).join('') + '</div>' : '';
+  if (qs.length < 2 && !(qs[0] && qs[0].id)){ box.innerHTML = brandRow; return; }
   // regions combined for drivers (Auburn + Downtown Auburn) show as one queue; each keeps its own Pause
   const merged = [], byLead = {};
   qs.forEach(q => {
@@ -954,7 +979,7 @@ function drawRegionQueues(res){
   });
   window.RG_ORDER = view.map(q=>q.id);
   const anyOpen = view.some(q=>RGQ_OPEN[q.id]);
-  box.innerHTML = '<div class="row between"><span class="muted small">' + (res.queues_all ? 'Queue in every region' : 'Queue in the regions you are working') +
+  box.innerHTML = brandRow + '<div class="row between"><span class="muted small">' + (res.queues_all ? 'Queue in every region' : 'Queue in the regions you are working') +
     '</span><button class="btn tiny" onclick="rgOpenAll(' + (anyOpen ? 'false' : 'true') + ')">' + (anyOpen ? 'Close all queues' : 'Open all queues') + '</button></div>' +
     view.map(q => {
       const late = q.oldest_min >= 15;
@@ -963,7 +988,7 @@ function drawRegionQueues(res){
         (q.waiting ? ', oldest ' + q.oldest_min + ' min' : '') + ', ' + q.drivers_on + ' driver' + (q.drivers_on===1?'':'s') + ' on' +
         (q.combined ? ' <span class="muted">(shared drivers)</span>' : '') + '</button>';
       const pill = q.parts.map(m =>
-        (m.paused ? ' <span class="pill red">' + (q.combined ? esc(m.name) + ' paused' : 'Paused') + (m.paused_by ? ' by ' + esc(m.paused_by) : '') + '</span>' : '') +
+        (m.paused ? ' <span class="pill red">' + (q.combined ? esc(m.name) + ' paused' : 'Paused') + (m.paused_by ? ' by ' + esc(m.paused_by) : '') + (m.paused_reason ? ': ' + esc(m.paused_reason) : '') + '</span>' : '') +
         (m.id ? ' <button class="btn tiny' + (m.paused ? '' : ' danger') + '" onclick="pauseRegion(' + m.id + ',' + (m.paused ? 'false' : 'true') + ',\'' + esc(m.name).replace(/'/g, "\\'") + '\')">' +
           (m.paused ? 'Resume' : 'Pause') + (q.combined ? ' ' + esc(m.name) : '') + '</button>' : '')).join('') +
         (q.waiting && late ? ' <span class="pill red">late</span>' : '');

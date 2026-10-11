@@ -549,6 +549,7 @@ def init_db():
     ensure_column(con, "regions", "paused", "INTEGER DEFAULT 0")
     ensure_column(con, "regions", "paused_by", "TEXT")
     ensure_column(con, "regions", "paused_at", "TEXT")
+    ensure_column(con, "regions", "paused_reason", "TEXT")    # why orders are paused, shown on the website
     ensure_column(con, "regions", "hours", "TEXT")          # blank = use the business hours
     ensure_column(con, "regions", "closed_dates", "TEXT")   # "2026-11-26,2026-12-25"
     ensure_column(con, "regions", "closed_reasons", "TEXT")   # {"2026-11-26": "Thanksgiving"} optional, shown to customers
@@ -1596,6 +1597,32 @@ def is_closed_day(restaurant_id, when=None):
                        (day, restaurant_id)).fetchone()
     return row["reason"] if row else None
 
+def open_for_future(r, when):
+    """is_open for a scheduled order, except a paused brand or region does not block it when the
+    order is for tomorrow or later in the region's own time. The pause still blocks later today,
+    and a restaurant closed on its own, or a closed date, blocks always."""
+    rg = r["region_id"] if "region_id" in r.keys() else None
+    local = to_region(when, rg)
+    if not region_paused_for(r) or local.date() <= region_now(rg).date():
+        return is_open(r, when)
+    if r["closed_override"] or is_closed_day(r["id"], when):
+        return False
+    span = json.loads(r["hours"]).get(str(local.weekday()))
+    if not span or span[0] == "" or span[1] == "":
+        return False
+    o = dt.datetime.strptime(span[0], "%H:%M").time()
+    c = dt.datetime.strptime(span[1], "%H:%M").time()
+    t = local.time()
+    return o <= t <= c if o <= c else (t >= o or t <= c)
+
+def region_paused_reason_for(r):
+    """The pause reason set for a restaurant's region ('' when not paused or no reason)."""
+    rg = r["region_id"] if "region_id" in r.keys() else None
+    if not rg:
+        return ""
+    row = db().execute("SELECT paused_reason FROM regions WHERE id=?", (rg,)).fetchone()
+    return (row["paused_reason"] or "").strip() if row else ""
+
 def paused_region_ids():
     try:
         return {r["id"] for r in db().execute("SELECT id FROM regions WHERE COALESCE(paused,0)=1").fetchall()}
@@ -2331,7 +2358,7 @@ def region_queues(region_ids=None, detail=True):
     """Waiting orders per region. region_ids empty/None = every region."""
     _hid = board_hidden_regions()
     regs = [r for r in all_regions() if (not region_ids or r["id"] in region_ids) and r["id"] not in _hid]
-    pinfo = {r["id"]: r for r in db().execute("SELECT id, paused, paused_by, paused_at FROM regions").fetchall()}
+    pinfo = {r["id"]: r for r in db().execute("SELECT id, paused, paused_by, paused_at, paused_reason FROM regions").fetchall()}
     rows = db().execute("""SELECT o.*, r.name rname FROM orders o LEFT JOIN restaurants r ON r.id=o.restaurant_id
                            WHERE o.dispatch_status IN ('queued','held')
                            ORDER BY o.created_at ASC, o.id ASC""").fetchall()
@@ -2362,6 +2389,7 @@ def region_queues(region_ids=None, detail=True):
         pi = pinfo.get(rid)
         q = {"id": rid, "name": name, "waiting": len(mine),
              "paused": bool(pi and pi["paused"]), "paused_by": (pi["paused_by"] if pi and pi["paused"] else "") or "",
+             "paused_reason": ((pi["paused_reason"] or "") if pi and pi["paused"] else "") or "",
              "oldest_min": mins(mine[0]) if mine else 0,
              "drivers_on": len(on),
              # regions combined for drivers (Auburn + Downtown Auburn) share this id so the board shows one queue
@@ -2374,6 +2402,31 @@ def region_queues(region_ids=None, detail=True):
                             "reason": o["hold_reason"] or "", "restaurant": o["rname"] or "",
                             "minutes": mins(o)} for i, o in enumerate(mine)]
         out.append(q)
+    return out
+
+
+def brand_pause_rows():
+    """Brands for the board's Pause buttons: each brand with its regions and whether every
+    region of it is paused. A dispatcher who is not the owner only sees brands they cover."""
+    if not brands_on():
+        return []
+    regs = db().execute("SELECT * FROM regions ORDER BY sort, name").fetchall()
+    if not is_owner():
+        mine = dispatcher_view_regions(session.get("dispatcher_id"))
+        if mine:
+            regs = [r for r in regs if r["id"] in mine]
+    pi = {x["id"]: x for x in db().execute("SELECT id, paused, paused_by, paused_reason FROM regions").fetchall()}
+    out = []
+    for st in db().execute("SELECT id, name FROM sites ORDER BY sort, id").fetchall():
+        mine = [r for r in regs if (r["site_id"] or 0) == st["id"]]
+        if not mine:
+            continue
+        paused = [r for r in mine if pi.get(r["id"]) and pi[r["id"]]["paused"]]
+        out.append({"site_id": st["id"], "name": st["name"], "all_paused": len(paused) == len(mine),
+                    "by": (paused[0]["paused_by"] or "") if len(paused) == len(mine) and paused else "",
+                    "reason": (paused[0]["paused_reason"] or "") if len(paused) == len(mine) and paused else "",
+                    "regions": [{"id": r["id"], "name": r["name"], "paused": bool(pi.get(r["id"]) and pi[r["id"]]["paused"])}
+                                for r in mine]})
     return out
 
 
@@ -3779,7 +3832,9 @@ def menu(slug):
     items = db().execute("SELECT * FROM menu_items WHERE restaurant_id=? AND active=1", (r["id"],)).fetchall()
     biz = business_is_open() and business_in_hours(rid=r["region_id"])
     open_now = biz and (any_rest_open() if r["slug"] == "oneoff" else is_open(r))
+    _paused = region_paused_for(r)
     return render_template("menu.html", r=r, rules=delivery_rules(r), service_bp=service_bp_for(r), items=items, open=open_now, biz_open=biz,
+                           region_paused=_paused, pause_reason=region_paused_reason_for(r),
                            hours=hours_label(r), custom=(r["slug"] == "oneoff"),
                            base_fee=money(fee_rules(r["region_id"])["base_fee"]),
                            base_miles="%g" % float(fee_rules(r["region_id"])["base_miles"] or 0),
@@ -5296,7 +5351,7 @@ def future_slots(r, day):
     end = t + dt.timedelta(days=1)
     while t < end:
         ta = from_region(t, rg)
-        if (ta >= earliest and is_open(r, ta) and business_in_hours(ta, rg) and
+        if (ta >= earliest and open_for_future(r, ta) and business_in_hours(ta, rg) and
                 (r["slug"] != "oneoff" or dispatcher_required() or item_available(any_rest_row(), ta))):
             out.append(t.strftime("%Y-%m-%dT%H:%M"))
         t += dt.timedelta(minutes=15)
@@ -5556,12 +5611,14 @@ def checkout():
             return jsonify({"ok": False, "error": "We are not open at " + when_label(sched.isoformat(), r["region_id"]) + "." +
                             ((" Our hours are " + business_hours_label(r["region_id"]) + ".") if business_hours_label(r["region_id"]) else "") +
                             ((" " + cl + ".") if cl else "")}), 400
-        if not is_disp and not is_open(r, sched):
+        if not is_disp and not open_for_future(r, sched):
             return jsonify({"ok": False, "error": r["name"] + " is not open at " +
                             when_label(sched.isoformat(), r["region_id"]) + ". Pick another time."}), 400
     if not sched and not is_open(r) and placed_by == "customer":
-        return jsonify({"ok": False, "error": r["name"] + " is closed right now. "
-                        "You can still schedule the order for a time they are open."}), 400
+        _why = region_paused_reason_for(r)
+        return jsonify({"ok": False, "error": r["name"] + " is closed right now" +
+                        ((" (orders paused: " + _why + ")") if _why else "") +
+                        ". You can still schedule the order for tomorrow or a time they are open."}), 400
     dg = "".join(ch for ch in str(payload.get("customer_phone", "")) if ch.isdigit())
     blocked = db().execute("SELECT * FROM blocked_customers WHERE phone=?", (dg,)).fetchone()
     if blocked and placed_by == "customer":
@@ -6851,6 +6908,7 @@ def api_board():
         "is_owner": owner_view,
         # queue rows follow the regions checked in I'm working; Show all regions brings back every one
         "region_queues": region_queues(myr),
+        "brands": brand_pause_rows(),
         "queues_all": not myr,
         "auto": bool(setting("auto_assign")),
         "tokens": token_list(),
@@ -6973,10 +7031,13 @@ def api_pause_region():
         return jsonify({"ok": False, "error": "You can only pause regions you are assigned to."}), 403
     want = bool(b["paused"]) if "paused" in b else not bool(r["paused"])
     who = session.get("dispatcher_name", "dispatch")
-    db().execute("UPDATE regions SET paused=?, paused_by=?, paused_at=? WHERE id=?",
-                 (1 if want else 0, who if want else None, now() if want else None, rid))
+    reason = str(b.get("reason") or "").strip()[:200]
+    db().execute("UPDATE regions SET paused=?, paused_by=?, paused_at=?, paused_reason=? WHERE id=?",
+                 (1 if want else 0, who if want else None, now() if want else None,
+                  (reason if reason else None) if want else None, rid))
     db().commit()
-    log("region_pause", r["name"] + (" paused by " if want else " resumed by ") + who)
+    log("region_pause", r["name"] + (" paused by " if want else " resumed by ") + who +
+        ((" (" + reason + ")") if want and reason else ""))
     auto_assign()
     return jsonify({"ok": True, "paused": want, "region": r["name"]})
 
@@ -10947,6 +11008,45 @@ def api_driver_active():
     log("driver_active", d["name"] + (" active" if want else " inactive") + " by " + (session.get("dispatcher_name") or "dispatch"))
     auto_assign()
     return jsonify({"ok": True, "active": want, "driver": d["name"]})
+
+
+@app.post("/api/dispatch/pause-brand")
+def api_pause_brand():
+    """Pause or resume every region of one brand (site) at once. A paused brand still takes
+    scheduled orders for tomorrow and later."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    b = request.get_json(force=True) or {}
+    try:
+        sid = int(b.get("site_id") or 0)
+    except (TypeError, ValueError):
+        sid = 0
+    st = db().execute("SELECT * FROM sites WHERE id=?", (sid,)).fetchone()
+    if not st:
+        return jsonify({"ok": False, "error": "Unknown brand."}), 404
+    regs = [r for r in db().execute("SELECT * FROM regions ORDER BY sort, name").fetchall()
+            if (r["site_id"] or 0) == sid]
+    if not regs:
+        return jsonify({"ok": False, "error": "That brand has no regions yet."}), 400
+    if not is_owner():
+        mine = dispatcher_view_regions(session.get("dispatcher_id"))
+        if mine and any(r["id"] not in mine for r in regs):
+            return jsonify({"ok": False, "error": "You are not assigned to every region of " + st["name"] +
+                            ", so you can't pause the whole brand."}), 403
+    pi = {x["id"]: bool(x["paused"]) for x in db().execute("SELECT id, paused FROM regions").fetchall()}
+    want = bool(b["paused"]) if "paused" in b else not all(pi.get(r["id"]) for r in regs)
+    who = session.get("dispatcher_name", "dispatch")
+    reason = str(b.get("reason") or "").strip()[:200]
+    for r in regs:
+        db().execute("UPDATE regions SET paused=?, paused_by=?, paused_at=?, paused_reason=? WHERE id=?",
+                     (1 if want else 0, who if want else None, now() if want else None,
+                      (reason if reason else None) if want else None, r["id"]))
+    db().commit()
+    log("region_pause", st["name"] + " brand " + ("paused (" if want else "resumed by " + who + " (") +
+        ", ".join(r["name"] for r in regs) + ")" + ((" " + reason) if want and reason else "") +
+        ("" if want else "") + ((" by " + who) if want else ""))
+    auto_assign()
+    return jsonify({"ok": True, "paused": want, "brand": st["name"]})
 
 
 @app.post("/api/dispatch/region-tz")

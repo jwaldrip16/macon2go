@@ -254,7 +254,7 @@ def reorder_late_warning(o):
     if not reorder_closed(o):
         return ""
     return ("Heads up: %s was delivered more than %d minutes ago. You can still create this order, "
-            "but check with the customer that it's really needed." % ((_rv(o, "primary_no") or "").strip() or o["code"],
+            "but check with the customer that it's really needed." % (ord_label(_rv(o, "primary_no"), o["code"], "dispatch"),
                                                                      REORDER_WINDOW_MIN))
 
 def reorder_closed_msg(o):
@@ -7844,7 +7844,8 @@ def dispatch_new_order():
                    "pay_method": _rv(o, "pay_method") or "",
                    "house_name": house_name_of(o),
                    "driver": (db().execute("SELECT name FROM drivers WHERE id=?", (o["driver_id"],)).fetchone() or {"name": ""})["name"] if o["driver_id"] else ""}
-            src["prev_no"] = ((_rv(o, "primary_no") or "").strip() or o["code"])
+            # follows Settings > Order numbers > Dispatch (TT/CTG/BF number, FF number, or both)
+            src["prev_no"] = ord_label(_rv(o, "primary_no"), o["code"], "dispatch")
             src["late_warning"] = late_warn
             src["problem"] = bool(request.args.get("problem"))
             if src["problem"]:

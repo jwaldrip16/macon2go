@@ -12,7 +12,7 @@
 <h1>{% if src and src['problem'] %}New order for a problem with {{ src['prev_no'] }}{% elif src %}New order from {{ src['code'] }}{% else %}Create an order{% endif %}</h1>
 {% for m in get_flashed_messages() %}<div class="panel" style="border-left:4px solid #b42318;color:#b42318">{{ m }}</div>{% endfor %}
 {% if src %}
-<div class="issuebar">Previous order: <b>{{ src['prev_no'] }}</b>{% if src['prev_no'] != src['code'] %} ({{ src['code'] }}){% endif %}.
+<div class="issuebar">Previous order: <b>{{ src['prev_no'] }}</b>.
   {% if src['problem'] %}Only the customer's name, phone and address are filled in. Pick the restaurant and items,
   say what went wrong, and choose the original driver or the queue.{% else %}Everything below is copied from it. Change anything you need,
   say what went wrong, then send it to the pending queue.{% endif %}</div>

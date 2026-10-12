@@ -350,7 +350,8 @@ function turnPill(d){
 }
 let GATED = '';
 function gateCheck(res, d){
-  // closed business: closed screen only. Unscheduled: notice plus dispatch chat so they can still reach dispatch.
+  // closed business or unscheduled: the gate notice stays, and the Schedule pane shows below it
+  // so drivers can still see and send their week while the business is closed or they are not scheduled.
   let mode = '';
   // a driver who still has orders always sees their run, even after dispatch sets them off or the business closes
   const hasOrders = (res.stack || []).length > 0;
@@ -370,17 +371,18 @@ function gateCheck(res, d){
     ? name + ' is closed.'
     : name + ' does not have you scheduled.';
   document.getElementById('gateSub').textContent = mode === 'closed'
-    ? 'The app will open by itself when dispatch opens the business.'
-    : 'Call dispatch or message them below to be put online.';
+    ? 'The app will open by itself when dispatch opens the business. Your schedule is below, and you can still send it in.'
+    : 'Call dispatch or message them below to be put online. Your schedule is below, and you can still send it in.';
   show('gate', true); show('status', false);
   if (tabbar) tabbar.classList.add('hidden');
-  ['paneRun','paneSched','paneDone'].forEach(function(id){ show(id, false); });
-  // closed: the notice only. Unscheduled: the notice, Call dispatch and the dispatch chat only.
+  ['paneRun','paneDone'].forEach(function(id){ show(id, false); });
+  // closed: the notice and the schedule. Unscheduled: the notice, Call dispatch, dispatch chat and the schedule.
   const closed = mode === 'closed';
   show('gateCall', !closed);
   show('sosRow', false);
   show('paneChat', !closed);
-  if (GATED !== mode && !closed){ DTAB = 'chat'; chat(); }
+  show('paneSched', true);
+  if (GATED !== mode){ refreshSchedule(); if (closed){ DTAB = 'sched'; } else { DTAB = 'chat'; chat(); } }
   GATED = mode;
   try { MY_STATUS = d.status; } catch(e){}
   return true;

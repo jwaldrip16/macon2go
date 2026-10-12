@@ -264,6 +264,9 @@ rsLoad();
   <label>Send a future order to the kitchen this many minutes before its delivery time</label>
   <input name="future_lead_min" type="number" min="10" max="240" value="{{ s['future_lead_min'] or 45 }}">
   <div class="muted small">Until then it waits on the Future tab and nobody else sees it.</div>
+  <label>ASAP orders are due by this many minutes after they come in</label>
+  <input name="asap_due_min" type="number" min="5" max="240" value="{{ s['asap_due_min'] or 45 }}">
+  <div class="muted small">Every order placed for now gets its Due by time filled in automatically. Change or clear it on the order in Edit order.</div>
   <h2>Delivery fees</h2>
   <label>Base fee in cents (first miles)</label>
   <input name="base_fee_cents" value="{{ s['base_fee_cents'] }}">

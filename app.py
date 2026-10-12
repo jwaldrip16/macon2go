@@ -354,7 +354,7 @@ def init_db():
         seed(con)   # a copy that was wiped with Start fresh stays empty
     topup_restaurants(con)
     for k, v in [("base_fee_cents", "399"), ("base_miles", "3"), ("per_mile_cents", "100"),
-                 ("tax_rate_bp", "900"), ("service_fee_bp", "0"), ("business_open", "0"), ("future_lead_min", "45"), ("kitchen_accept_min", "5"), ("driver_accept_min", "3"), ("late_sound_after_min", "3"), ("driver_done_cleared_at", ""), ("auto_assign", "1"), ("kitchen_hold", "1"), ("keep_awake_driver", "1"), ("keep_awake_kitchen", "1"), ("auto_driver_pay", "1"), ("auto_pay_cap_cents", "2500"), ("auto_pay_delay_min", "15"), ("max_stack_default", "3"), ("sched_lead_min", "60"), ("stack_by_location", "1"), ("stack_pickup_mi", "0.5"), ("stack_detour_mi", "2"),
+                 ("tax_rate_bp", "900"), ("service_fee_bp", "0"), ("business_open", "0"), ("future_lead_min", "45"), ("asap_due_min", "45"), ("kitchen_accept_min", "5"), ("driver_accept_min", "3"), ("late_sound_after_min", "3"), ("driver_done_cleared_at", ""), ("auto_assign", "1"), ("kitchen_hold", "1"), ("keep_awake_driver", "1"), ("keep_awake_kitchen", "1"), ("auto_driver_pay", "1"), ("auto_pay_cap_cents", "2500"), ("auto_pay_delay_min", "15"), ("max_stack_default", "3"), ("sched_lead_min", "60"), ("stack_by_location", "1"), ("stack_pickup_mi", "0.5"), ("stack_detour_mi", "2"),
                  ("assign_on_pending", "0"), ("week_open_dow", "4"), ("week_open_date", ""), ("one_run_at_a_time", "0"),
                  ("tip_prompt", "1"), ("dispatch_phone", "3342092844"),
                  ("loyalty_on", "1"), ("points_per_dollar", "1"), ("reward_points", "100"),
@@ -5349,6 +5349,14 @@ def future_lead():
     except Exception:
         return 45
 
+
+def asap_due_min():
+    """ASAP orders are due by this many minutes after they come in (Settings field)."""
+    try:
+        return max(5, min(240, int(setting("asap_due_min") or 45)))
+    except Exception:
+        return 45
+
 def when_label(s, rid=None, local=False):
     """'Today at 6:30 PM'. With a region, an app-time stamp is shown in that region's time
     (local=True means s is already the region's time)."""
@@ -5869,6 +5877,12 @@ def checkout():
             hold_reason=CASE WHEN kitchen_status='pending' THEN 'tap Send to kitchen' ELSE hold_reason END,
             kitchen_status=CASE WHEN kitchen_status='pending' THEN 'waiting' ELSE kitchen_status END
             WHERE id=?""", (oid,))
+        db().commit()
+    if not sched:
+        # ASAP order: it is due by <Settings window> minutes after it came in.
+        # Dispatch can change or clear that on the order (Edit order > Due by).
+        _due = (dt.datetime.now() + dt.timedelta(minutes=asap_due_min())).replace(microsecond=0).isoformat()
+        db().execute("UPDATE orders SET due_by=? WHERE id=? AND due_by IS NULL", (_due, oid))
         db().commit()
     cash = bool(payload.get("cash")) and placed_by == "dispatch" and bool(dispatcher_required())
     if cash:
@@ -12301,6 +12315,15 @@ def dispatch_settings():
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('future_lead_min',?)", (str(lm),))
             else:
                 FUTURE_LEAD_ERR.append(1)
+        if "asap_due_min" in request.form:
+            try:
+                am = int(request.form["asap_due_min"])
+            except ValueError:
+                am = -1
+            if 5 <= am <= 240:
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('asap_due_min',?)", (str(am),))
+            else:
+                FUTURE_LEAD_ERR.append(2)
         if "default_max_miles" in request.form:
             _dm = str(request.form.get("default_max_miles") or "").strip()
             try:

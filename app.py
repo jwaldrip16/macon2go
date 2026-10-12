@@ -9597,6 +9597,15 @@ def api_driver_availability():
         return jsonify({"ok": False}), 403
     data = request.get_json(force=True)
     if data.get("delete_id"):
+        row = db().execute("SELECT week_start FROM availability WHERE id=? AND driver_id=?",
+                           (data["delete_id"], did)).fetchone()
+        if not row:
+            return jsonify({"ok": False}), 404
+        sub = db().execute("SELECT submitted_at FROM week_submissions WHERE driver_id=? AND week_start=?",
+                           (did, row["week_start"])).fetchone()
+        if sub and sub["submitted_at"]:
+            return jsonify({"ok": False,
+                            "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
         db().execute("DELETE FROM availability WHERE id=? AND driver_id=?", (data["delete_id"], did))
     else:
         dow = int(data.get("dow", 0))
@@ -9612,6 +9621,12 @@ def api_driver_availability():
                 return jsonify({"ok": False, "error": "Pick a date."}), 400
         else:
             _d = dt.date.today() + dt.timedelta(days=(dow - dt.date.today().weekday()) % 7)
+        _ws = monday_of(_d).isoformat()
+        sub = db().execute("SELECT submitted_at FROM week_submissions WHERE driver_id=? AND week_start=?",
+                           (did, _ws)).fetchone()
+        if sub and sub["submitted_at"]:
+            return jsonify({"ok": False,
+                            "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
         rids, rerr = slot_regions_for("driver", did, data.get("regions"), True)
         if rerr:
             return jsonify({"ok": False, "error": rerr}), 400
@@ -9620,7 +9635,7 @@ def api_driver_availability():
             return jsonify({"ok": False, "error": herr}), 400
         db().execute("""INSERT INTO availability(driver_id,dow,start_time,end_time,note,status,created_at,
                         week_start,region_ids) VALUES(?,?,?,?,?,'pending',?,?,?)""",
-                     (did, dow, start, end, data.get("note", ""), now(), monday_of(_d).isoformat(), rids))
+                     (did, dow, start, end, data.get("note", ""), now(), _ws, rids))
         name = db().execute("SELECT name FROM drivers WHERE id=?", (did,)).fetchone()["name"]
         log("availability", name + " asked for " + DOW_NAMES[dow] + " " + start + "-" + end)
     db().commit()
@@ -9650,6 +9665,11 @@ def api_driver_week_save():
         return jsonify({"ok": False}), 403
     data = request.get_json(force=True)
     ws = parse_week(data.get("week_start"))
+    sub = db().execute("SELECT submitted_at FROM week_submissions WHERE driver_id=? AND week_start=?",
+                       (did, ws.isoformat())).fetchone()
+    if sub and sub["submitted_at"]:
+        return jsonify({"ok": False,
+                        "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
     if ws < current_week_start():
         return jsonify({"ok": False, "error": "That week is closed and saved. Ask dispatch to change it."}), 400
     if dt.datetime.now() < week_opens(ws):

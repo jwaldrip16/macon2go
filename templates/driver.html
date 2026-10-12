@@ -983,14 +983,15 @@ function drawWeek(){
   const w = WEEK;
   const due = document.getElementById('weekDue');
   const locked = w.saved || w.locked;
-  const shut = locked || w.not_yet || (w.past_due && !w.window_open);
+  const sent = w.submitted;
+  const shut = locked || sent || w.not_yet || (w.past_due && !w.window_open);
   due.className = 'duebar ' + (locked ? 'ok' : (w.not_yet ? 'open' : (w.submitted ? 'ok' : (w.past_due ? 'late' : 'open'))));
   due.innerHTML = locked
     ? 'Saved. ' + w.label + ' is finished and on the record. Dispatch can still change it.'
     : (w.not_yet
         ? w.label + ' opens ' + w.opens_human + ' and closes ' + w.due_human + '.'
         : (w.submitted
-            ? 'Sent for ' + w.label + '. Change it and send again any time before ' + w.due_human + '.'
+            ? 'Sent for ' + w.label + ". You can't change it now. Message dispatch and they can change it for you."
             : (w.past_due
                 ? 'Closed. ' + w.label + ' was due ' + w.due_human + '. Message dispatch to get on it.'
                 : w.label + ' is open now and closes ' + w.due_human + '.')));

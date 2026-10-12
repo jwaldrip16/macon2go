@@ -7356,16 +7356,28 @@ def release_to_kitchen(o, who):
     log("order", o["code"] + (" sent to the kitchen by " if order_uses_app(o) else " released to call in by ") + who)
 
 
+def region_site_id(rid):
+    """The brand (site) a region belongs to; 0 when none."""
+    row = db().execute("SELECT site_id FROM regions WHERE id=?", (rid or 0,)).fetchone()
+    return (row["site_id"] if row else 0) or 0
+
+
 def _has_swap_target(o):
-    """Another location with the same name the order could swap to (no swap window needed otherwise)."""
-    r = db().execute("SELECT id, name FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+    """Another location with the same name, in the same region and brand, the order could
+    swap to (no swap window needed otherwise). A chain with locations in other cities or
+    other brands does not count: those pickups are too far apart to swap."""
+    r = db().execute("SELECT id, name, region_id FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
     if not r:
         return False
     tok = re.sub(r"[^a-z0-9]+", "", (r["name"] or "").split(" ")[0].lower())
     if not tok:
         return False
+    src_reg = (r["region_id"] if "region_id" in r.keys() else 0) or 0
+    src_site = region_site_id(src_reg)
     for cand in db().execute("SELECT id, name, region_id FROM restaurants WHERE slug!='oneoff'").fetchall():
         if cand["id"] == o["restaurant_id"] or restaurant_locked(cand):
+            continue
+        if (cand["region_id"] or 0) != src_reg or region_site_id(cand["region_id"] or 0) != src_site:
             continue
         if re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower()) == tok:
             return True
@@ -7755,7 +7767,9 @@ def api_dispatch_order_edit_load(oid):
     r = db().execute("SELECT * FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
     chain = re.sub(r"[^a-z0-9]+", "", ((r["name"] if r else "") or "").split(" ")[0].lower())
     regs = None if is_owner() else dispatcher_view_regions(session.get("dispatcher_id"))
-    swaps = []
+    src_reg = (r["region_id"] if r and "region_id" in r.keys() else 0) or 0
+    src_site = region_site_id(src_reg)
+    swaps, other_city = [], 0
     for cand in db().execute("SELECT * FROM restaurants WHERE slug!='oneoff' ORDER BY name").fetchall():
         if cand["id"] == o["restaurant_id"] or restaurant_locked(cand):
             continue
@@ -7764,6 +7778,9 @@ def api_dispatch_order_edit_load(oid):
         tok = re.sub(r"[^a-z0-9]+", "", (cand["name"] or "").split(" ")[0].lower())
         if tok != chain:
             continue   # a different name cannot be swapped
+        if (cand["region_id"] or 0) != src_reg or region_site_id(cand["region_id"] or 0) != src_site:
+            other_city += 1   # same name, but a different city or brand: not a swap target
+            continue
         swaps.append({"id": cand["id"], "name": cand["name"], "open": bool(is_open(cand)), "chain": True})
     swaps.sort(key=lambda x: (not x["chain"], not x["open"], x["name"].lower()))
     can_swap, swap_block = True, ""
@@ -7793,7 +7810,9 @@ def api_dispatch_order_edit_load(oid):
                     "restaurant": r["name"] if r else "",
                     "can_swap": can_swap, "swap_block": swap_block,
                     "swap_history": hist,
-                    "swap_note": "" if swaps else "No other locations with this name.",
+                    "swap_note": "" if swaps else
+                                 ("Other locations with this name are in a different city or brand, so the pickup can't move."
+                                  if other_city else "No other locations with this name."),
                     "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
                     "fee_cents": o["fee_cents"], "tip_cents": o["tip_cents"],
@@ -7862,7 +7881,11 @@ def api_order_edit():
             nr = db().execute("SELECT * FROM restaurants WHERE id=?", (new_rid,)).fetchone()
             if not nr or restaurant_locked(nr):
                 return jsonify({"ok": False, "error": "That restaurant isn't live."}), 400
-            cr = db().execute("SELECT name FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+            cr = db().execute("SELECT name, region_id FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
+            _src_reg = ((cr["region_id"] if cr and "region_id" in cr.keys() else 0) or 0)
+            if (nr["region_id"] or 0) != _src_reg or region_site_id(nr["region_id"] or 0) != region_site_id(_src_reg):
+                return jsonify({"ok": False,
+                                "error": "That location is in a different city or brand, so the pickup can't move there."}), 400
             _cur = re.sub(r"[^a-z0-9]+", "", ((cr["name"] if cr else "") or "").split(" ")[0].lower())
             _new = re.sub(r"[^a-z0-9]+", "", (nr["name"] or "").split(" ")[0].lower())
             if _cur != _new:

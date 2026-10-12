@@ -14227,6 +14227,8 @@ def app_manifest(which):
         _ic = "driver" if "driver" in which else "kitchen"
         icons = [{"src": "/static/icons/%s-%d.png" % (_ic, s), "sizes": "%dx%d" % (s, s), "type": "image/png",
                   "purpose": "any"} for s in (192, 512)]
+        icons += [{"src": "/static/icons/%s-maskable-%d.png" % (_ic, s), "sizes": "%dx%d" % (s, s), "type": "image/png",
+                   "purpose": "maskable"} for s in (192, 512)]
     else:
         icons = [{"src": "/brand/icon-%d.png" % s, "sizes": "%dx%d" % (s, s), "type": "image/png", "purpose": "any"}
                  for s in (192, 512)]

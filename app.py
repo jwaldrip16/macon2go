@@ -9642,6 +9642,66 @@ def api_driver_availability():
     return jsonify({"ok": True, "availability": availability_for(did), "time_off": time_off_for(did)})
 
 
+@app.get("/api/dispatch/schedule-reopen")
+def api_dispatch_reopen_get():
+    """Pick a driver and a week in Settings; this returns their sent weeks."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    did = request.args.get("driver_id", type=int)
+    drivers = scoped_drivers(db().execute(
+        "SELECT id, name FROM drivers WHERE active=1 ORDER BY name").fetchall())
+    out = {"ok": True, "drivers": [dict(d) for d in drivers]}
+    if did:
+        bad = out_of_scope(did)
+        if bad:
+            return bad
+        weeks = []
+        for k in range(-4, 2):
+            wstart = current_week_start() + dt.timedelta(days=7 * k)
+            sub = db().execute("SELECT submitted_at, locked_at FROM week_submissions WHERE driver_id=? AND week_start=?",
+                               (did, wstart.isoformat())).fetchone()
+            n = db().execute("SELECT COUNT(*) c FROM availability WHERE driver_id=? AND week_start=?",
+                             (did, wstart.isoformat())).fetchone()["c"]
+            weeks.append({"week_start": wstart.isoformat(), "label": range_label(wstart),
+                          "sent": bool(sub and sub["submitted_at"]),
+                          "sent_at": ((sub["submitted_at"] if sub else "") or "")[:16].replace("T", " "),
+                          "saved": bool(sub and sub["locked_at"]),
+                          "hours": n})
+        out["weeks"] = weeks
+    return jsonify(out)
+
+
+@app.post("/api/dispatch/schedule-reopen")
+def api_dispatch_reopen():
+    """Dispatch lets a driver change and resend a week they already sent in."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    b = request.get_json(force=True) or {}
+    did, ws_raw = b.get("driver_id"), b.get("week_start")
+    if not did or not ws_raw:
+        return jsonify({"ok": False, "error": "Pick a driver and a week."}), 400
+    bad = out_of_scope(did)
+    if bad:
+        return bad
+    try:
+        ws = dt.date.fromisoformat(str(ws_raw)[:10])
+    except ValueError:
+        return jsonify({"ok": False, "error": "Pick a week."}), 400
+    sub = db().execute("SELECT * FROM week_submissions WHERE driver_id=? AND week_start=?",
+                       (did, ws.isoformat())).fetchone()
+    if not sub or not sub["submitted_at"]:
+        return jsonify({"ok": False, "error": "That week was not sent in, so there is nothing to reopen."}), 400
+    db().execute("UPDATE week_submissions SET submitted_at=NULL, locked_at=NULL WHERE id=?", (sub["id"],))
+    dname = db().execute("SELECT name FROM drivers WHERE id=?", (did,)).fetchone()["name"]
+    who = session.get("dispatcher_name") or "Dispatch"
+    auto_msg("drv_schedule", "INSERT INTO messages(driver_id,sender,sender_name,body,created_at) VALUES(?,?,?,?,?)",
+             (did, "dispatch", who, "Dispatch reopened your schedule for " + range_label(ws) +
+              ". Change it in the driver app and send it in again.", now()))
+    log("availability", who + " let " + dname + " resubmit the week of " + range_label(ws))
+    db().commit()
+    return jsonify({"ok": True})
+
+
 @app.get("/api/driver/week")
 def api_driver_week():
     """The calendar a driver fills in each week. Defaults to the week they owe."""

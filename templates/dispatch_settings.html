@@ -3,6 +3,18 @@
 {% if saved %}<p class="good">Settings saved.</p>{% endif %}
 {% for e in errors or [] %}<p style="color:#c0392b">{{ e }}</p>{% endfor %}
 <div class="panel narrow">
+  <h2>Driver schedule resubmit</h2>
+  <p class="muted small">A driver who already sent their week in can't change it. If one sent it by mistake,
+    pick them here and let them change and resend it. They get a message in the driver app.</p>
+  <label>Driver</label>
+  <select id="rsDrv" onchange="rsLoad()"><option value="">Loading drivers...</option></select>
+  <label>Week</label>
+  <select id="rsWk" onchange="rsState()"></select>
+  <p class="muted small" id="rsStateP"></p>
+  <button type="button" class="btn small" id="rsBtn" onclick="rsAllow()" disabled>Let them resubmit</button>
+  <span class="small" id="rsMsg"></span>
+</div>
+<div class="panel narrow">
   <h2>Logo</h2>
   <p class="muted small">Shows at the top of the customer site, dispatch, the driver app and the restaurant app,
     and is used for the driver and kitchen app icons. A square PNG at least 512 pixels wide looks sharpest.</p>
@@ -30,6 +42,41 @@ async function setLogo(inp){
   if (!res.ok){ document.getElementById('logoMsg').textContent = res.error || 'Not saved.'; return; }
   location.reload();
 }
+async function rsLoad(){
+  const r = await (await fetch('/api/dispatch/schedule-reopen')).json().catch(()=>({ok:false}));
+  if (!r.ok) return;
+  const sel = document.getElementById('rsDrv');
+  const cur = sel.value;
+  sel.innerHTML = r.drivers.map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('');
+  if (cur) sel.value = cur;
+  rsWeeks();
+}
+async function rsWeeks(){
+  const did = document.getElementById('rsDrv').value;
+  if (!did){ document.getElementById('rsWk').innerHTML = ''; rsState(); return; }
+  const r = await (await fetch('/api/dispatch/schedule-reopen?driver_id='+did)).json().catch(()=>({ok:false}));
+  if (!r.ok){ rsState(); return; }
+  document.getElementById('rsWk').innerHTML = r.weeks.map(w=>
+    '<option value="'+w.week_start+'">'+w.label+(w.saved?' (saved by dispatch)':w.sent?' (sent'+(w.sent_at?' '+w.sent_at:'')+')':' (not sent)')+'</option>').join('');
+  rsState();
+}
+function rsState(){
+  const o = document.getElementById('rsWk').selectedOptions[0];
+  const sent = !!(o && o.text.indexOf('(sent') >= 0);
+  document.getElementById('rsBtn').disabled = !sent;
+  document.getElementById('rsStateP').textContent =
+    sent ? 'Sent in. Reopening lets the driver change and resend it.' : 'Pick a week the driver already sent in.';
+}
+async function rsAllow(){
+  const did = document.getElementById('rsDrv').value;
+  const wk = document.getElementById('rsWk').value;
+  document.getElementById('rsMsg').textContent = 'Reopening...';
+  const res = await (await fetch('/api/dispatch/schedule-reopen', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body: JSON.stringify({driver_id: parseInt(did,10), week_start: wk})})).json().catch(()=>({ok:false}));
+  document.getElementById('rsMsg').textContent = res.ok ? 'Done. The driver can change and resend that week now.' : (res.error || 'Not reopened.');
+  if (res.ok) rsWeeks();
+}
+rsLoad();
 </script>
 <form class="panel narrow" method="post">
   <h2>Business</h2>

@@ -123,6 +123,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
       <button class="btn small primary" id="weekSave" onclick="saveWeek()">Send this week to dispatch</button>
       <button class="btn small" id="weekCopy" onclick="copyLast()">Copy my usual hours</button>
     </div>
+    <p class="muted small">Once a week is sent in, it's locked for editing. Message dispatch or the owner for any schedule changes.</p>
     <h2 class="mt">Your usual week</h2>
     <p class="muted small">Your standing pattern. The calendar above is what you actually work next week.</p>
     <div id="week" class="week"></div>
@@ -991,7 +992,7 @@ function drawWeek(){
     : (w.not_yet
         ? w.label + ' opens ' + w.opens_human + ' and closes ' + w.due_human + '.'
         : (w.submitted
-            ? 'Sent for ' + w.label + ". You can't change it now. Message dispatch and they can change it for you."
+            ? 'Sent for ' + w.label + ". You can't change it now. Message dispatch or the owner and they can change it for you."
             : (w.past_due
                 ? 'Closed. ' + w.label + ' was due ' + w.due_human + '. Message dispatch to get on it.'
                 : w.label + ' is open now and closes ' + w.due_human + '.')));

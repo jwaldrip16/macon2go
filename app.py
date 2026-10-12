@@ -9605,7 +9605,7 @@ def api_driver_availability():
                            (did, row["week_start"])).fetchone()
         if sub and sub["submitted_at"]:
             return jsonify({"ok": False,
-                            "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
+                            "error": "You already sent this week to dispatch. Message dispatch or the owner and they can change it."}), 400
         db().execute("DELETE FROM availability WHERE id=? AND driver_id=?", (data["delete_id"], did))
     else:
         dow = int(data.get("dow", 0))
@@ -9626,7 +9626,7 @@ def api_driver_availability():
                            (did, _ws)).fetchone()
         if sub and sub["submitted_at"]:
             return jsonify({"ok": False,
-                            "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
+                            "error": "You already sent this week to dispatch. Message dispatch or the owner and they can change it."}), 400
         rids, rerr = slot_regions_for("driver", did, data.get("regions"), True)
         if rerr:
             return jsonify({"ok": False, "error": rerr}), 400
@@ -9729,7 +9729,7 @@ def api_driver_week_save():
                        (did, ws.isoformat())).fetchone()
     if sub and sub["submitted_at"]:
         return jsonify({"ok": False,
-                        "error": "You already sent this week to dispatch. Message dispatch and they can change it."}), 400
+                        "error": "You already sent this week to dispatch. Message dispatch or the owner and they can change it."}), 400
     if ws < current_week_start():
         return jsonify({"ok": False, "error": "That week is closed and saved. Ask dispatch to change it."}), 400
     if dt.datetime.now() < week_opens(ws):

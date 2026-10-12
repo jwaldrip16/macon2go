@@ -5945,9 +5945,11 @@ def checkout():
     paid_by_credit = credit_note.get("paid", False)
     _orow = db().execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
     confirm = confirm_call_info(_orow)
+    _primary = (_orow["primary_no"] or "").strip() if "primary_no" in _orow.keys() else ""
     return jsonify({"pay_url": ("/pay/" + code) if (use_pp and not cash and not paid_by_credit) else "",
                     "credit": credit_note, "confirm_call": confirm,
-                    "future_note": future_note, "ok": True, "cash": cash, "code": code, "order_id": oid, "total": money(total),
+                    "future_note": future_note, "ok": True, "cash": cash, "code": code, "order_id": oid,
+                    "primary_no": _primary, "total": money(total),
                     "send_note": send_note,
                     "address_ok": bool(address_ok),
                     "message": (credit_note.get("message", "") + " " if credit_note.get("message") else "") + ("" if address_ok and cash else

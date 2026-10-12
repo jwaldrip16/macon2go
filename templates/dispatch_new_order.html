@@ -569,20 +569,22 @@ async function placeOrder(){
     redeem_reward: parseInt((document.getElementById('useReward')||{}).value||'0',10) || 0,
     source: 'call_in'}));
   if(!res.ok){ placeHint(res.error || 'The order did not go through.'); alert(res.error || 'The order did not go through.'); return; }
-  if(res.credit && res.credit.message) alert(res.code + ': ' + res.credit.message + (res.credit.paid ? ' Nothing left to pay.' : ''));
-  if(res.send_note && res.cash) alert(res.code + ': ' + res.send_note);
-  if(res.future_note) alert(res.code + ': ' + res.future_note + ' It waits on the Future orders tab until then.');
+  const noLabel = res.primary_no ? (res.primary_no + ' (' + res.code + ')') : res.code;
+  if(res.credit && res.credit.message) alert(noLabel + ': ' + res.credit.message + (res.credit.paid ? ' Nothing left to pay.' : ''));
+  if(res.send_note && res.cash) alert(noLabel + ': ' + res.send_note);
+  if(res.future_note) alert(noLabel + ': ' + res.future_note + ' It waits on the Future orders tab until then.');
   if(!res.cash){
     // card order: type the card, copy it to your terminal, mark paid. Nothing is saved.
     if ({{ 'true' if pp_on else 'false' }}){
-      ppCard.open({code:res.code, amount:res.total, closeLabel:'Close and go to the board',
+      ppCard.open({code:noLabel, amount:res.total, closeLabel:'Close and go to the board',
                    onClose:function(){ window.location = '/dispatch'; }});
       return;
     }
-    ffCard.open({id:res.order_id, code:res.code, amount:res.total, closeLabel:'Close and go to the board',
+    ffCard.open({id:res.order_id, code:noLabel, amount:res.total, closeLabel:'Close and go to the board',
                  onClose:function(){ window.location = '/dispatch'; }});
     return;
   }
+  alert('Order ' + noLabel + ' is in. It is on the board now.');
   window.location = '/dispatch';
 }
 function whenToggle(){

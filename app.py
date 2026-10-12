@@ -3934,13 +3934,21 @@ def api_quote():
             warning = txt + " Dispatch can still place it."
         else:
             return jsonify({"ok": False, "out_of_range": True, "error": txt})
-    return jsonify({"ok": True, "formatted": g1["formatted"], "lat": g1["lat"], "lng": g1["lng"],
-                    "warning": warning, "min_order_cents": rules["min_cents"],
-                    "min_order": money(rules["min_cents"]) if rules["min_cents"] else "",
-                    "max_miles": rules["max_miles"],
-                    "miles": miles, "fee_cents": fee, "fee": money(fee),
-                    "restaurant": r["name"], "restaurant_address": r["address"],
-                    "restaurant_lat": r["lat"], "restaurant_lng": r["lng"]})
+    payload = {"ok": True, "formatted": g1["formatted"], "lat": g1["lat"], "lng": g1["lng"],
+               "warning": warning, "min_order_cents": rules["min_cents"],
+               "min_order": money(rules["min_cents"]) if rules["min_cents"] else "",
+               "max_miles": rules["max_miles"],
+               "miles": miles, "fee_cents": fee, "fee": money(fee),
+               "restaurant": r["name"], "restaurant_address": r["address"],
+               "restaurant_lat": r["lat"], "restaurant_lng": r["lng"]}
+    dr = None
+    if r["lat"] is not None and r["lng"] is not None:
+        dr = drive_route((r["lat"], r["lng"]), (g1["lat"], g1["lng"]))
+    if dr:
+        payload["route"] = dr["points"]
+        payload["drive_miles"] = dr["miles"]
+        payload["drive_min"] = dr["minutes"]
+    return jsonify(payload)
 
 @app.post("/api/validate-address")
 def api_validate_address():
@@ -6160,6 +6168,34 @@ def leg_minutes(a_lat, a_lng, b_lat, b_lng):
     if len(_LEG_CACHE) > 2000:
         _LEG_CACHE.clear()
     return mins
+
+
+_ROUTE_CACHE = {}
+
+
+def drive_route(a, b, ttl=600):
+    """The driving route from a to b, for maps in the dispatch portal. Google
+    when possible, cached for a few minutes so repeated checks stay cheap."""
+    if None in (a[0], a[1], b[0], b[1]):
+        return None
+    key = ("%.4f,%.4f" % (a[0], a[1]), "%.4f,%.4f" % (b[0], b[1]))
+    hit = _ROUTE_CACHE.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    out = None
+    if GOOGLE_KEY:
+        try:
+            rt = google_routes(a, b, "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline", timeout=8)
+            pts = _decode_poly((rt.get("polyline") or {}).get("encodedPolyline", ""))
+            if len(pts) > 1:
+                out = {"points": pts, "miles": round(rt.get("distanceMeters", 0) / 1609.344, 1),
+                       "minutes": round(_gsecs(rt.get("duration")) / 60.0)}
+        except Exception:
+            out = None
+    _ROUTE_CACHE[key] = (time.time(), out)
+    if len(_ROUTE_CACHE) > 500:
+        _ROUTE_CACHE.clear()
+    return out
 
 
 def _fresh_fix(d):

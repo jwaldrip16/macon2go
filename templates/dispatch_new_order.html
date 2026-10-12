@@ -643,18 +643,26 @@ function showOnMap(res){
     pts.push([res.restaurant_lat, res.restaurant_lng]);
     L.marker([res.restaurant_lat, res.restaurant_lng], {icon: pinIcon('#bf7e0a','R')}).addTo(OLAYER)
       .bindPopup('<strong>'+(res.restaurant||'Restaurant')+'</strong>');
-    L.polyline(pts, {color:'#1e58c8', weight:3, opacity:.6, dashArray:'6 6'}).addTo(OLAYER);
+    if(res.route && res.route.length > 1){
+      L.polyline(res.route, {color:'#1e58c8', weight:4, opacity:.75}).addTo(OLAYER);
+    } else {
+      L.polyline(pts, {color:'#1e58c8', weight:3, opacity:.6, dashArray:'6 6'}).addTo(OLAYER);
+    }
   }
   setTimeout(function(){
     OMAP.invalidateSize();
     if(pts.length > 1) OMAP.fitBounds(pts, {padding:[35,35], maxZoom:14});
     else OMAP.setView(pts[0], 14);
   }, 60);
-  document.getElementById('omapNote').innerHTML =
-    'Pin dropped on the validated address. ' +
-    '<a href="https://www.google.com/maps/dir/?api=1&destination=' + res.lat + ',' + res.lng +
-    '" target="_blank">Open the drive in Maps</a>' +
-    (res.restaurant ? (' &middot; ' + res.miles + ' mi from ' + res.restaurant) : '');
+  let note = 'Pin dropped on the validated address. ' +
+    '<a href="https://www.google.com/maps/dir/?api=1' +
+    (res.restaurant_lat ? ('&origin=' + res.restaurant_lat + ',' + res.restaurant_lng) : '') +
+    '&destination=' + res.lat + ',' + res.lng + '" target="_blank">Open the drive in Maps</a>';
+  if(res.restaurant){
+    note += ' &middot; ' + (res.drive_miles ? (res.drive_miles + ' mi drive, about ' + res.drive_min +
+             ' min from ' + res.restaurant) : (res.miles + ' mi from ' + res.restaurant));
+  }
+  document.getElementById('omapNote').innerHTML = note;
 }
 drawMenu();
 

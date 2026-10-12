@@ -689,6 +689,7 @@ def init_db():
     con.execute("""UPDATE orders SET driver_paged_at=COALESCE(paged_at, created_at) WHERE driver_paged_at IS NULL
                    AND dispatch_status='assigned'""")
     ensure_column(con, "orders", "scheduled_for", "TEXT")
+    ensure_column(con, "orders", "due_by", "TEXT")
     ensure_column(con, "orders", "release_at", "TEXT")
     ensure_column(con, "orders", "sched_kitchen", "TEXT")
     ensure_column(con, "orders", "sched_dispatch", "TEXT")
@@ -3584,6 +3585,23 @@ def _safe_items(raw):
     except Exception:
         return []
 
+def parse_due_by(val):
+    """A due-by time for an order: HH:MM (today), or a full date+time. Empty clears it."""
+    v = str(val or "").strip()
+    if not v:
+        return ""
+    try:
+        return dt.datetime.fromisoformat(v).replace(microsecond=0).isoformat()
+    except ValueError:
+        pass
+    m = re.match(r"^(\d{1,2}):(\d{2})$", v)
+    if m:
+        hh, mm = int(m.group(1)), int(m.group(2))
+        if 0 <= hh < 24 and 0 <= mm < 60:
+            return dt.datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0).isoformat()
+    raise ValueError("bad due_by")
+
+
 def order_dict(o):
     r = db().execute("SELECT * FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
     d = db().execute("SELECT * FROM drivers WHERE id=?", (o["driver_id"],)).fetchone() if o["driver_id"] else None
@@ -3605,6 +3623,8 @@ def order_dict(o):
         "site_logo": site_logo_url(_so),
         "eta_min": _e["eta_min"], "eta_clock": _e["eta_clock"], "eta_note": _e["eta_note"],
         "scheduled_for": o["scheduled_for"], "scheduled_label": when_label(o["scheduled_for"], _rv(o, "region_id")) if o["scheduled_for"] else "",
+        "due_by": (o["due_by"] if "due_by" in o.keys() and o["due_by"] else ""),
+        "due_by_label": clock(o["due_by"], _rv(o, "region_id")) if "due_by" in o.keys() and o["due_by"] else "",
         "release_label": when_label(o["release_at"], _rv(o, "region_id")) if o["release_at"] else "", "tz": region_tz(_rv(o, "region_id")), "tz_tag": tz_tag(_rv(o, "region_id")).strip(), "ref": (o["ref_code"] or ""), "restaurant": pu["name"], "restaurant_address": pu["address"],
         "restaurant_phone": pu["phone"], "restaurant_tel": "tel:" + digits(pu["phone"]),
         "pickup_listed": pu["listed"],
@@ -7815,6 +7835,9 @@ def api_dispatch_order_edit_load(oid):
                                   if other_city else "No other locations with this name."),
                     "swap_restaurants": swaps,
                     "items": json.loads(o["items"] or "[]"),
+                    "due_by": (o["due_by"] if "due_by" in o.keys() and o["due_by"] else ""),
+                    "due_by_time": (dt.datetime.fromisoformat(o["due_by"]).strftime("%H:%M")
+                                    if "due_by" in o.keys() and o["due_by"] else ""),
                     "fee_cents": o["fee_cents"], "tip_cents": o["tip_cents"],
                     "ref": o["ref_code"] or "",
                     "primary_no": (o["primary_no"] if "primary_no" in o.keys() else "") or "",
@@ -7842,6 +7865,12 @@ def api_order_edit():
                      (clean_ref(data.get("ref"), data.get("customer_phone") or o["customer_phone"]) or None, o["id"]))
     if "token" in data:
         db().execute("UPDATE orders SET token=? WHERE id=?", (clean_token(data.get("token")), o["id"]))
+    if "due_by" in data:
+        try:
+            due = parse_due_by(data.get("due_by"))
+        except ValueError:
+            return jsonify({"ok": False, "error": "Type a real due-by time, like 6:30 PM."}), 400
+        db().execute("UPDATE orders SET due_by=? WHERE id=?", (due or None, o["id"]))
     # Customer details: name, phone, address can be fixed after the order is placed.
     changed, addr_msg = [], ""
     if "customer_name" in data:

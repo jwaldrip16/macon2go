@@ -59,6 +59,7 @@
       row('Brand', o.site_name ? esc(o.site_name) : '')+
       row('House account', o.house ? '<b>'+esc(o.house_name || 'No business name')+'</b>' : '')+
       row('Scheduled for', o.scheduled_label ? '<b>'+esc(o.scheduled_label)+'</b>' : '')+
+      row('Due by', o.due_by_label ? '<b>'+esc(o.due_by_label)+'</b>' : '')+
       row('Items'+(o.item_count ? ' ('+o.item_count+')' : ''), '<ul class="lines ovitems">'+lines(o)+'</ul>')+
       row('Customer', '<b>'+esc(o.customer||'')+'</b>'+(ph ? '<br>'+ph : ''))+
       row('Deliver to', esc(o.address||'')+(o.note ? '<div class="ovnote">'+esc(o.note)+'</div>' : ''))+

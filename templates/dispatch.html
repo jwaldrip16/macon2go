@@ -380,6 +380,9 @@ async function editOrder(oid){
           return '<option value="'+x[0]+'"'+((res.drop_style||'door')===x[0]?' selected':'')+'>'+x[1]+'</option>'; }).join('')+
       '</select></label>'+
       '<label class="small"><input type="checkbox" id="edCRecalc"> If the address changes, set the delivery fee for the new distance</label>'+
+      '<div class="edrow"><label class="small">Due by <input id="edDue" type="time" value="'+edEsc(res.due_by_time||'')+'"></label>'+
+      '<button type="button" class="btn tiny" onclick="document.getElementById(\'edDue\').value=\'\'">Clear</button>'+
+      '<span class="small muted">when this order needs to be delivered by</span></div>'+
     '</details>'+
     '<div class="im-cols"><div><h3 class="small-sec">Add from the menu</h3><div id="edMenu"></div></div>'+
     '<div><h3 class="small-sec">On this order</h3><div id="edLines"></div>'+
@@ -489,7 +492,8 @@ async function edSave(){
       drop_style: document.getElementById('edDrop').value,
       recalc_fee: document.getElementById('edCRecalc').checked,
       fee_cents: Math.round((parseFloat(document.getElementById('edFee').value)||0)*100),
-      tip_cents: Math.round((parseFloat(document.getElementById('edTip').value)||0)*100)});
+      tip_cents: Math.round((parseFloat(document.getElementById('edTip').value)||0)*100),
+      due_by: document.getElementById('edDue') ? document.getElementById('edDue').value : ''});
   btn.disabled=false;
   if(r2 && r2.ok){
     if(r2.dupe) alert('Heads up: '+ref+' is already on order '+r2.dupe+' today.');
@@ -1389,6 +1393,11 @@ function etaPill(o){
   const t = o.eta_note==='scheduled' ? 'Due '+o.eta_clock : 'ETA '+o.eta_clock+' ('+o.eta_min+' min)';
   return '<span class="pill blue" title="'+(o.eta_note?esc(o.eta_note):'estimate')+'">'+t+(o.eta_note==='live GPS'?' &#9679;':'')+'</span> ';
 }
+function duePill(o){
+  if (!o.due_by_label || o.dispatch_status==='delivered' || o.dispatch_status==='cancelled') return '';
+  const past = o.due_by && (new Date(o.due_by) < new Date());
+  return '<span class="pill '+(past?'red':'amber')+'" title="when this order needs to be delivered by">Due by '+esc(o.due_by_label)+(past?' (past)':'')+'</span> ';
+}
 function multiPill(o){
   let h = (o.multi_group && o.multi_group.length) ? ' <span class="pill amber" title="Separate orders for the same customer, coordinate the delivery">Multiple order with '+esc(o.multi_group.join(', '))+'</span>' : '';
   if(o.dispatch_status !== 'delivered' && o.dispatch_status !== 'cancelled')
@@ -1568,7 +1577,7 @@ function orderCard(o, opts, drivers){
     '<div class="order-actions">'+
       OrderView.btn(o)+
       payButtons(o)+
-      etaPill(o)+kitchenGo(o)+
+      etaPill(o)+duePill(o)+kitchenGo(o)+
       manualButtons(o)+
       (o.needs_address_approval ? '<button class="btn tiny primary" onclick="approveAddress('+o.id+
         ',\''+o.address.replace(/'/g,"\\'")+'\',\''+String(o.fee||'').replace(/'/g,'')+'\')">Approve address</button>' : '')+

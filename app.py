@@ -361,6 +361,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, code TEXT UNIQUE NOT NULL,
         url TEXT NOT NULL, listed INTEGER DEFAULT 1, active INTEGER DEFAULT 1, created_at TEXT)""")
     ensure_column(con, "companies", "site_id", "INTEGER DEFAULT 0")   # brand shown in the shared apps (0 = match by web address)
+    ensure_column(con, "companies", "logo", "TEXT DEFAULT ''")   # a logo uploaded on Companies wins over the brand match
     cur = con.execute("SELECT COUNT(*) c FROM restaurants")
     _fresh = con.execute("SELECT value FROM settings WHERE key='fresh_start'").fetchone()
     if cur.fetchone()["c"] == 0 and not (_fresh and _fresh[0] == "1"):
@@ -12597,7 +12598,7 @@ def dispatch_settings():
         if errs:
             db().commit()
             rows = db().execute("SELECT * FROM settings").fetchall()
-            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
+            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
                                    saved=False, errors=errs, bh=business_hours_rows(),
                                    bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
         if "order_tokens" in request.form:
@@ -12606,7 +12607,7 @@ def dispatch_settings():
         db().commit()
         saved = True
     rows = db().execute("SELECT * FROM settings").fetchall()
-    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
+    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
                            bh=business_hours_rows(), bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
 
 # ---------------------------------------------------------------- chat
@@ -15097,7 +15098,7 @@ def company_here(c):
 
 
 def companies_with_look():
-    return [dict(r, here=company_here(r), **company_look(r)) for r in company_rows(False)]
+    return [dict(r, here=company_here(r), own_logo=(r.get("logo") or ""), **company_look(r)) for r in company_rows(False)]
 
 
 def dispatch_pick_companies():
@@ -15118,6 +15119,29 @@ def dispatch_pick_companies():
 def company_rows(only_active=True):
     q = "SELECT * FROM companies" + (" WHERE COALESCE(active,1)=1" if only_active else "") + " ORDER BY name COLLATE NOCASE"
     return [dict(r) for r in db().execute(q).fetchall()]
+
+
+def self_company_entry():
+    """The company entry THIS copy of the app is, so the owner of a separate company's site can see
+    their own name, code and web address in Settings. Nothing on the main platform, which has the
+    developer page for that."""
+    if platform_role() == "main":
+        return None
+    try:
+        rows = company_rows(False)
+    except Exception:
+        return None
+    host = platform_host()
+    mine = [r for r in rows if _norm_host(r.get("url")) == host]
+    if not mine and len(rows) == 1:
+        mine = rows
+    if len(mine) != 1:
+        return None
+    r = dict(mine[0])
+    r["listed"] = 1 if r.get("listed") is None else (1 if r.get("listed") else 0)
+    r["active"] = 1 if r.get("active") is None else (1 if r.get("active") else 0)
+    r.update(company_look(r))
+    return r
 
 
 def company_site(c):
@@ -15182,6 +15206,9 @@ def company_look(c):
     else:
         # no brand row: the company is the main business (Tiger Town To Go), with the main logo
         logo, brand, bs = main_brand_logo(), c.get("name") or main_brand_name(), "main"
+    custom = (c.get("logo") or "").strip() if isinstance(c, dict) else ""
+    if custom:
+        logo = custom   # a logo uploaded on Companies wins over the matched brand
     if logo.startswith("/") and has_request_context():
         logo = request.host_url.rstrip("/") + logo
     return {"brand": brand, "logo": logo, "bs": bs}
@@ -15468,15 +15495,28 @@ def api_dispatch_companies():
     if site_id and site_by_id(site_id) is None:
         site_id = 0
     active = 1 if str(f.get("active", "1")).lower() in ("1", "true", "on", "yes") else 0
+    logo = None   # None leaves the saved logo alone
+    if f.get("logo_clear"):
+        logo = ""   # back to the matched brand logo
+    else:
+        _lg = str(f.get("logo") or "").strip()
+        if _lg:
+            if not (_lg.startswith("data:image/") and len(_lg) <= 400000):
+                return jsonify({"ok": False, "error": "That logo is too big or not an image. Pick a picture under about 300 KB."}), 400
+            logo = _lg
     dup = db().execute("SELECT id FROM companies WHERE code=? AND id<>?", (code, cid)).fetchone()
     if dup:
         return jsonify({"ok": False, "error": "Another company already uses that code."}), 400
     if cid:
-        db().execute("UPDATE companies SET name=?, code=?, url=?, listed=?, active=?, site_id=? WHERE id=?",
-                     (name, code, url, listed, active, site_id, cid))
+        if logo is None:
+            db().execute("UPDATE companies SET name=?, code=?, url=?, listed=?, active=?, site_id=? WHERE id=?",
+                         (name, code, url, listed, active, site_id, cid))
+        else:
+            db().execute("UPDATE companies SET name=?, code=?, url=?, listed=?, active=?, site_id=?, logo=? WHERE id=?",
+                         (name, code, url, listed, active, site_id, logo, cid))
     else:
-        db().execute("INSERT INTO companies(name, code, url, listed, active, site_id, created_at) VALUES(?,?,?,?,?,?,?)",
-                     (name, code, url, listed, active, site_id, dt.datetime.now().isoformat(timespec="seconds")))
+        db().execute("INSERT INTO companies(name, code, url, listed, active, site_id, logo, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                     (name, code, url, listed, active, site_id, logo or "", dt.datetime.now().isoformat(timespec="seconds")))
     db().commit()
     return jsonify({"ok": True, "companies": companies_with_look()})
 

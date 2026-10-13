@@ -23,6 +23,18 @@
   <button type="button" class="btn small" onclick="setLogo(null)">Use the original Tiger Town logo</button>
   <span class="small muted" id="logoMsg"></span>
 </div>
+{% if owner_view and co %}
+<div class="panel narrow">
+  <h2>Your company in the shared apps</h2>
+  <p class="muted small">Your company's account in the shared Fleet Foot Driver and Fleet Foot Restaurant apps. The code is what you give your drivers and restaurants: they open the app, type the code, and land on your site.</p>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0">
+    <img src="{{ co.logo }}" alt="" style="width:40px;height:40px;object-fit:contain;border:1px solid #e4e7ee;border-radius:6px;background:#fff">
+    <div><b>{{ co.name }}</b><div class="muted small">{{ co.url }}</div></div>
+  </div>
+  <p>Code: <b style="font-size:20px;letter-spacing:1px">{{ co.code }}</b>
+    <span class="muted small">({% if co.listed %}shown in the app list{% else %}reachable by code only{% endif %}, {% if co.active %}active{% else %}turned off{% endif %})</span></p>
+</div>
+{% endif %}
 <script>
 async function setSiteImg(which, inp){
   const fd = new FormData(); fd.append('which', which);

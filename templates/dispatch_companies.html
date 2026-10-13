@@ -12,6 +12,12 @@
     </div>
     <div style="margin-top:8px"><label class="small" for="coSite">Brand (logo and name shown in the apps)</label>
       <select name="site_id" id="coSite"><option value="0">Match by web address or name</option>{% for b in sites %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select></div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <img id="coLogoPrev" alt="" style="width:40px;height:40px;object-fit:contain;border:1px solid #e4e7ee;border-radius:6px;background:#fff">
+      <label class="btn small">Upload a logo<input type="file" accept="image/*" id="coLogoFile" hidden onchange="coLogoPick(this)"></label>
+      <label class="small" id="coLogoClearWrap" style="display:none"><input type="checkbox" id="coLogoClear"> Use the matched brand logo again</label>
+      <span class="small muted" id="coLogoMsg"></span>
+    </div>
     <label class="small"><input type="checkbox" name="listed" checked> Show in list</label>
     <label class="small" style="margin-left:12px"><input type="checkbox" name="active" checked> Active</label>
     <div style="margin-top:8px"><button class="btn primary" type="submit" id="saveBtn">Add company</button>
@@ -26,6 +32,21 @@
 </div>
 <script>
 var COS = {{ companies|tojson }};
+var coLogo=null;
+function coLogoPick(inp){
+  if(!inp.files.length) return;
+  var img=new Image();
+  img.onload=function(){
+    var max=256, w=img.naturalWidth||img.width, h=img.naturalHeight||img.height, sc=Math.min(1, max/Math.max(w,h));
+    var cv=document.createElement('canvas'); cv.width=Math.max(1,Math.round(w*sc)); cv.height=Math.max(1,Math.round(h*sc));
+    cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height);
+    coLogo=cv.toDataURL('image/png');
+    document.getElementById('coLogoPrev').src=coLogo;
+    document.getElementById('coLogoMsg').textContent='Custom logo ready. Click Save changes to use it.';
+  };
+  img.onerror=function(){document.getElementById('coLogoMsg').textContent='That file is not an image.';};
+  img.src=URL.createObjectURL(inp.files[0]);
+}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function draw(){
   var tb=document.getElementById('coRows'); tb.innerHTML='';
@@ -38,19 +59,24 @@ function draw(){
   });
 }
 var f=document.getElementById('coForm');
-function reset(){f.reset();f.id.value=0;document.getElementById('saveBtn').textContent='Add company';document.getElementById('cancelBtn').style.display='none';document.getElementById('coErr').textContent='';}
+function reset(){f.reset();f.id.value=0;document.getElementById('saveBtn').textContent='Add company';document.getElementById('cancelBtn').style.display='none';document.getElementById('coErr').textContent='';coLogo=null;document.getElementById('coLogoPrev').src='';document.getElementById('coLogoClearWrap').style.display='none';document.getElementById('coLogoMsg').textContent='';}
 document.getElementById('cancelBtn').onclick=reset;
 document.getElementById('coRows').onclick=async function(e){
   var id=e.target.getAttribute('data-e'), del=e.target.getAttribute('data-d');
   if(id){var c=COS.find(function(x){return x.id==id;}); f.id.value=c.id; f.name.value=c.name; f.code.value=c.code; f.url.value=c.url; f.site_id.value=String(c.site_id||0);
     f.listed.checked=!!c.listed; f.active.checked=!!c.active; document.getElementById('saveBtn').textContent='Save changes';
-    document.getElementById('cancelBtn').style.display='inline-block'; window.scrollTo(0,0);}
+    document.getElementById('cancelBtn').style.display='inline-block'; window.scrollTo(0,0);
+    coLogo=null;document.getElementById('coLogoPrev').src=c.logo||'';document.getElementById('coLogoClear').checked=false;
+    document.getElementById('coLogoClearWrap').style.display=(c.own_logo?'inline-block':'none');document.getElementById('coLogoMsg').textContent='';}
   if(del){var c2=COS.find(function(x){return x.id==del;}); if(!confirm('Remove '+c2.name+' from the shared apps?'))return;
     var j=await jpost('/api/dispatch/companies',{op:'delete',id:del}); if(j.ok){COS=COS.filter(function(x){return x.id!=del;});draw();reset();}}
 };
 f.onsubmit=async function(e){e.preventDefault();
-  var j=await jpost('/api/dispatch/companies',{op:'save',id:f.id.value,name:f.name.value,code:f.code.value,url:f.url.value,site_id:f.site_id.value,
-    listed:f.listed.checked?'1':'0',active:f.active.checked?'1':'0'});
+  var p={op:'save',id:f.id.value,name:f.name.value,code:f.code.value,url:f.url.value,site_id:f.site_id.value,
+    listed:f.listed.checked?'1':'0',active:f.active.checked?'1':'0'};
+  if(coLogo) p.logo=coLogo;
+  if(document.getElementById('coLogoClear').checked) p.logo_clear='1';
+  var j=await jpost('/api/dispatch/companies',p);
   if(!j.ok){document.getElementById('coErr').textContent=j.error||'Could not save.';return;}
   COS=j.companies; draw(); reset();
 };

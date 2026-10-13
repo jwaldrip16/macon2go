@@ -101,6 +101,7 @@ function money(c){ return '$' + (c/100).toFixed(2); }
 <div class="poweredby"><img src="/static/brand/logo-default.png" alt="" style="height:22px;width:auto;vertical-align:middle;margin-right:6px">Powered by Fleet Foot Delivery{% if portal or staff_area %} &middot; <a href="/privacy">Privacy policy</a> &middot; <a href="/delete-account">Delete account</a>{% endif %}</div>
 <script src="{{ url_for('static', filename='alert.js') }}"></script>
 <script src="{{ url_for('static', filename='notify.js') }}"></script>
+<script src="{{ url_for('static', filename='push.js') }}" defer></script>
 <script>
 
 // ---- address type-ahead, shared by the customer site and dispatch ----
@@ -167,7 +168,7 @@ if (!window.ffNotify){
     bar.innerHTML = '<span>Allow pop-up alerts so you never miss an order update.</span>'+
       '<button type="button" style="background:#fff;color:#1f6f43;border:0;border-radius:6px;padding:6px 12px;font-weight:600">Allow</button>'+
       '<button type="button" style="background:transparent;color:#fff;border:1px solid #fff;border-radius:6px;padding:6px 10px">Later</button>';
-    function ask(){ try { Notification.requestPermission().then(function(){ bar.remove(); }); } catch(e){ bar.remove(); } }
+    function ask(){ try { Notification.requestPermission().then(function(){ bar.remove(); if (window.ffPush) window.ffPush.ensure(); }); } catch(e){ bar.remove(); } }
     bar.children[1].onclick = ask;
     bar.children[2].onclick = function(){ bar.remove(); };
     document.addEventListener('DOMContentLoaded', function(){ document.body.appendChild(bar); });

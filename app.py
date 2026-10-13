@@ -168,6 +168,13 @@ CREATE TABLE IF NOT EXISTS closures (
   reason TEXT,
   UNIQUE(restaurant_id, day));
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint TEXT UNIQUE NOT NULL,
+  p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+  role TEXT NOT NULL, who INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT, fails INTEGER NOT NULL DEFAULT 0);
+
 CREATE TABLE IF NOT EXISTS broadcasts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   audience TEXT NOT NULL, body TEXT NOT NULL,
@@ -2744,7 +2751,12 @@ def auto_msg_on(key):
 def auto_msg(key, sql, params):
     """Write an automatic message only when that message type is switched on in Settings."""
     if auto_msg_on(key):
-        return db().execute(sql, params)
+        cur = db().execute(sql, params)
+        try:
+            _push_auto_msg(sql, params)   # push copies of dispatch/system notices to phones
+        except Exception:
+            pass
+        return cur
     return None
 
 def short_staff_alert():
@@ -2791,6 +2803,7 @@ def short_staff_alert():
             ph = phone_digits(d["phone"] or "")
             if len(ph) >= 10:
                 send_text("+1" + ph[-10:], body)
+            push_driver(d["id"], body, tag="busy")
             log("busy_alert", "Asked " + d["name"] + " to come online (" + str(n) + " waiting)")
         con.commit()
     except Exception as e:
@@ -2857,6 +2870,7 @@ def auto_assign():
             log("assign", o["code"] + " -> " + d["name"] + " (stacked by location, +%.1f mi)" % detour)
         else:
             log("assign", o["code"] + " -> " + d["name"])
+        push_driver(d["id"], "New order " + o["code"] + " was sent to you.", tag="assign-" + o["code"])
         con.commit()
     rebalance_stacks()
     recompute_queue()
@@ -2905,6 +2919,9 @@ def rebalance_stacks():
             auto_msg("drv_moved", "INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
                         (old["id"], "system", "Order " + o["code"] + " moved to another driver.", now()))
         log("assign", o["code"] + " -> " + d["name"] + " (moved off " + (old["name"] if old else "?") + ")")
+        push_driver(d["id"], "New order " + o["code"] + " was sent to you.", tag="assign-" + o["code"])
+        if old:
+            push_driver(old["id"], "Order " + o["code"] + " moved to another driver.", tag="moved-" + o["code"])
         con.commit()
 
 def nav_url(dest, lat=None, lng=None, name=None):
@@ -4329,6 +4346,7 @@ def mark_paid(o, method="recorded", ref="", cents=None):
                         WHERE id=? AND driver_id IS NULL""", (o["id"],))
         db().execute("""UPDATE orders SET dispatch_status='assigned'
                         WHERE id=? AND driver_id IS NOT NULL AND dispatch_status='awaiting_payment'""", (o["id"],))
+        push_driver(o["driver_id"], "Order " + o["code"] + " is paid and on your run.", tag="assign-" + o["code"])
     elif released:
         kitchen = "pending" if o["address_ok"] else "waiting"
         reason = "waiting on kitchen" if o["address_ok"] else "address needs dispatch approval"
@@ -5501,6 +5519,7 @@ def rest_auto(rid, body, key="rest_order"):
         db().execute("""INSERT INTO rest_messages(restaurant_id,sender,who,body,created_at,seen_by_rest,seen_by_dispatch)
                         VALUES(?,?,?,?,?,0,1)""", (rid, "dispatch", "Automatic message", "Automatic message: " + body, now()))
         db().commit()
+        push_kitchen(rid, body, tag="restmsg")
     except Exception as e:
         print("rest_auto skipped", rid, e)
 
@@ -5562,6 +5581,7 @@ def api_dispatch_rest_chat(rid):
             return jsonify({"ok": False, "error": "Type a message first."}), 400
         db().execute("""INSERT INTO rest_messages(restaurant_id,sender,who,body,created_at,seen_by_dispatch)
                         VALUES(?,?,?,?,?,1)""", (rid, "dispatch", (session.get("dispatcher_name") or "Dispatch") + (" (Developer)" if is_dev() else ""), body, now()))
+        push_kitchen(rid, body, tag="rchat")
     db().execute("UPDATE rest_messages SET seen_by_dispatch=1 WHERE restaurant_id=? AND sender='restaurant'", (rid,))
     db().commit()
     return jsonify({"ok": True, "messages": rest_chat_rows(rid)})
@@ -7211,6 +7231,9 @@ def api_assign():
                                      "Complete it or send it back to the queue first."}), 400
         db().execute("""UPDATE orders SET driver_id=?, dispatch_status='assigned', hold_reason=NULL,
                         stack_seq=? WHERE id=?""", (did, seq, oid))
+        _c = db().execute("SELECT code FROM orders WHERE id=?", (oid,)).fetchone()
+        if _c:
+            push_driver(did, "New order " + _c["code"] + " was sent to you.", tag="assign-" + _c["code"])
         if prev_did and str(prev_did) != str(did):
             # close the gap in the old driver's run and tell them it left
             gone = db().execute("SELECT code FROM orders WHERE id=?", (oid,)).fetchone()["code"]
@@ -7436,12 +7459,18 @@ def api_unsend_kitchen():
 
 
 def release_to_kitchen(o, who):
+    was = o["kitchen_status"]
     db().execute("UPDATE orders SET kitchen_go=1, confirm_state=CASE WHEN confirm_state='waiting' THEN 'confirmed' ELSE confirm_state END WHERE id=?", (o["id"],))
     if o["kitchen_status"] == "waiting":
         db().execute("""UPDATE orders SET kitchen_status='pending',
                         hold_reason=CASE WHEN dispatch_status IN ('held','queued') THEN 'waiting on kitchen' ELSE hold_reason END
                         WHERE id=?""", (o["id"],))
     db().commit()
+    try:
+        if order_uses_app(o) and was == "waiting":   # the kitchen is learning this order now
+            push_kitchen(o["restaurant_id"], "New order " + rest_ord_no(o) + ". Open the kitchen app.", tag="knew-" + o["code"])
+    except Exception:
+        pass
     log("order", o["code"] + (" sent to the kitchen by " if order_uses_app(o) else " released to call in by ") + who)
 
 
@@ -8007,6 +8036,8 @@ def api_order_edit():
             db().execute("UPDATE orders SET primary_no=NULL, primary_seq=NULL, primary_day=NULL WHERE id=?", (o["id"],))
             new_no = assign_primary(o["id"]) or ""
             o = db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone()
+            if o["kitchen_status"] == "pending" and order_uses_app(o):
+                push_kitchen(nr["id"], "New order " + o["code"] + " was sent to you.", tag="knew-" + o["code"])
             changed.append("restaurant")
             swap_msg = "Moved to " + nr["name"] + " for pickup" + \
                        (", %.1f mi from the customer now" % mi if mi else "") + \
@@ -8328,6 +8359,7 @@ def api_order_note():
         db().execute("INSERT INTO messages(driver_id,sender,sender_name,dispatcher_id,body,created_at) VALUES(?,?,?,?,?,?)",
                      (did, "dispatch", session.get("dispatcher_name"), session.get("dispatcher_id"),
                       "Note on " + o["code"] + ": " + note, now()))
+        push_driver(did, "Note on " + o["code"] + ": " + note, tag="note-" + o["code"])
     log("note", o["code"] + " " + note[:80])
     db().commit()
     return jsonify({"ok": True, "note": note})
@@ -8939,6 +8971,7 @@ def api_staff_chat_send():
     db().execute("""INSERT INTO messages(driver_id,sender,sender_name,dispatcher_id,body,created_at,region_id)
                     VALUES(0,'dispatch',?,?,?,?,?)""",
                  (session.get("dispatcher_name"), me, body, now(), rg))
+    push_drivers_region(rg, body, tag="bcast")
     db().commit()
     return jsonify({"ok": True})
 
@@ -9434,6 +9467,7 @@ def api_broadcast():
         db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
                      (d["id"], "dispatch", body, now()))
         send_text(d["phone"], body)
+        push_driver(d["id"], body, tag="bcast")
     db().execute("INSERT INTO broadcasts(audience,body,sent_to,created_at) VALUES(?,?,?,?)",
                  (audience, body, len(rows), now()))
     log("broadcast", audience + " x" + str(len(rows)))
@@ -11781,6 +11815,7 @@ def api_send_to_driver():
         db().execute("""UPDATE orders SET driver_id=?, dispatch_status='assigned', stack_seq=?,
                         hold_reason=NULL WHERE id=?""", (did, seq, o["id"]))
         db().commit()
+        push_driver(did, "New order " + o["code"] + " was sent to you.", tag="assign-" + o["code"])
         log("send_to_driver", o["code"] + " -> " + d["name"])
         return jsonify({"ok": True, "driver": d["name"]})
     auto_assign()
@@ -11826,6 +11861,7 @@ def api_reopen():
         auto_msg("drv_reopen", "INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
                      (o["driver_id"], "dispatch",
                       "Order " + o["code"] + " was reopened and sent back to you. Tap Received to accept it.", now()))
+        push_driver(o["driver_id"], "Order " + o["code"] + " was reopened and sent back to you.", tag="assign-" + o["code"])
     else:
         db().execute("""UPDATE orders SET dispatch_status='queued', delivered_at=NULL, driver_id=NULL,
                         stack_seq=NULL, hold_reason=NULL WHERE id=?""", (o["id"],))
@@ -14407,6 +14443,185 @@ def well_known_assetlinks():
     resp = send_from_directory(APP_DIR_STATIC, "assetlinks.json", mimetype="application/json")
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
+
+# --- web push: real notifications on the driver and kitchen phones ----------
+# A phone registers (push.js) once, we keep the subscription, and dispatch/system
+# events send a push even when the app is closed on the phone.
+
+PUSH_ICON = {"driver": "/static/icons/driver-192.png",
+             "kitchen": "/static/icons/kitchen-192.png"}
+
+
+def vapid_keys():
+    """This site's push keys. Generated once, kept in settings."""
+    con = db()
+    rows = con.execute("SELECT key, value FROM settings WHERE key IN ('vapid_pub','vapid_priv')").fetchall()
+    have = {r["key"]: r["value"] for r in rows}
+    if have.get("vapid_pub") and have.get("vapid_priv"):
+        return have["vapid_pub"], have["vapid_priv"]
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pub, _ = priv.public_key(), None
+    priv_b64 = base64.urlsafe_b64encode(priv.private_numbers().private_value.to_bytes(32, "big")).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)).decode().rstrip("=")
+    con.execute("INSERT INTO settings(key,value) VALUES('vapid_pub',?)", (pub_b64,))
+    con.execute("INSERT INTO settings(key,value) VALUES('vapid_priv',?)", (priv_b64,))
+    con.commit()
+    return pub_b64, priv_b64
+
+
+def ffpush(role, who, title, body, tag=None, url=None):
+    """Send a push to every phone registered for this role + owner. Never raises."""
+    if not who or not body:
+        return 0
+    try:
+        subs = db().execute("SELECT * FROM push_subscriptions WHERE role=? AND who=?",
+                            (role, who)).fetchall()
+    except Exception:
+        return 0
+    if not subs:
+        return 0
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        return 0
+    try:
+        _, priv = vapid_keys()
+    except Exception:
+        return 0
+    payload = json.dumps({"title": title or "Fleet Foot Delivery", "body": body,
+                          "tag": tag or "", "url": url or "/", "icon": PUSH_ICON.get(role)})
+    sent = 0
+    for s in subs:
+        try:
+            webpush(subscription_info={"endpoint": s["endpoint"],
+                                       "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}},
+                    data=payload, vapid_private_key=priv,
+                    vapid_claims={"sub": "mailto:johnq.waldrip@gmail.com"})
+            sent += 1
+        except Exception as e:
+            code = getattr(getattr(e, "response", None), "status_code", 0) or 0
+            try:
+                if code in (400, 401, 404, 410):
+                    db().execute("DELETE FROM push_subscriptions WHERE id=?", (s["id"],))
+                else:
+                    fails = (s["fails"] or 0) + 1
+                    if fails >= 5:
+                        db().execute("DELETE FROM push_subscriptions WHERE id=?", (s["id"],))
+                    else:
+                        db().execute("UPDATE push_subscriptions SET fails=? WHERE id=?", (fails, s["id"]))
+                db().commit()
+            except Exception:
+                pass
+    return sent
+
+
+def push_driver(did, body, tag="drv", title="Fleet Foot Delivery", url="/driver"):
+    try:
+        return ffpush("driver", did, title, body, tag=tag, url=url)
+    except Exception:
+        return 0
+
+
+def push_kitchen(rid, body, tag="kit", title="Fleet Foot Delivery", url="/restaurant"):
+    try:
+        return ffpush("kitchen", rid, title, body, tag=tag, url=url)
+    except Exception:
+        return 0
+
+
+def push_drivers_region(rg, body, tag="region", title="Fleet Foot Delivery"):
+    """A region-wide dispatch message: push to every registered driver in that region."""
+    if not rg:
+        return 0
+    try:
+        rows = db().execute("SELECT DISTINCT who FROM push_subscriptions WHERE role='driver'").fetchall()
+    except Exception:
+        return 0
+    n = 0
+    for r in rows:
+        try:
+            if rg in (driver_region_ids(r["who"]) or []):
+                n += push_driver(r["who"], body, tag=tag, title=title)
+        except Exception:
+            pass
+    return n
+
+
+def _push_auto_msg(sql, params):
+    """Ride along on an automatic message to a driver: push it to their phone too,
+    but only when dispatch or the system sent it (never the driver's own)."""
+    flat = " ".join(str(sql).split())
+    up = flat.upper()
+    if not up.startswith("INSERT INTO MESSAGES("):
+        return
+    cols = [c.strip() for c in flat[flat.index("(") + 1:flat.index(")")].split(",")]
+    if "driver_id" not in cols or "sender" not in cols or "body" not in cols:
+        return
+    vals = list(params)
+    if len(vals) < len(cols):
+        return
+    m = dict(zip(cols, vals))
+    try:
+        did = int(m.get("driver_id") or 0)
+    except (TypeError, ValueError):
+        return
+    sender = str(m.get("sender") or "")
+    body = str(m.get("body") or "")
+    if did <= 0 or sender not in ("dispatch", "system") or not body:
+        return
+    push_driver(did, body, title="Message from dispatch" if sender == "dispatch" else "Notice")
+
+
+@app.get("/api/push/key")
+def api_push_key():
+    try:
+        pub, _ = vapid_keys()
+        return jsonify({"ok": True, "key": pub})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 500
+
+
+@app.post("/api/push/subscribe")
+def api_push_subscribe():
+    b = request.get_json(force=True, silent=True) or {}
+    sub = b.get("subscription") or {}
+    endpoint = str(sub.get("endpoint") or "")[:1000]
+    keys = sub.get("keys") or {}
+    if not endpoint or not keys.get("p256dh") or not keys.get("auth"):
+        return jsonify({"ok": False, "error": "That push subscription is incomplete."}), 400
+    did = session.get("driver_id")
+    rid = session.get("restaurant_id")
+    if did:
+        role, who = "driver", did
+    elif rid:
+        role, who = "kitchen", rid
+    else:
+        return jsonify({"ok": False, "error": "Sign in first."}), 403
+    try:
+        vapid_keys()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)[:200]}), 500
+    db().execute("""INSERT INTO push_subscriptions(endpoint,p256dh,auth,role,who,created_at,fails)
+                    VALUES(?,?,?,?,?,?,0)
+                    ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth,
+                    role=excluded.role, who=excluded.who, fails=0""",
+                 (endpoint, keys["p256dh"][:300], keys["auth"][:300], role, who, now()))
+    db().commit()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/push/unsubscribe")
+def api_push_unsubscribe():
+    b = request.get_json(force=True, silent=True) or {}
+    endpoint = str(((b.get("subscription") or {}).get("endpoint")) or "")[:1000]
+    if endpoint:
+        db().execute("DELETE FROM push_subscriptions WHERE endpoint=?", (endpoint,))
+        db().commit()
+    return jsonify({"ok": True})
 
 
 @app.get("/sw.js")

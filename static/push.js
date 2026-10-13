@@ -18,7 +18,30 @@
     return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                        body: JSON.stringify(body)}).then(r => r.json()).catch(() => ({}));
   }
+  function ffPushState(state, hint){
+    // One-line status on the app: green = this phone will get alerts even closed.
+    try {
+      var el = document.getElementById('ffPushState');
+      if (!el){
+        el = document.createElement('div');
+        el.id = 'ffPushState';
+        el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;background:#0b3d24;color:#fff;padding:8px 14px;z-index:9997;display:flex;gap:10px;align-items:center;justify-content:center;font-size:13px;text-align:center';
+        var add = function(){ (document.body || document.documentElement).appendChild(el); };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', add); else add();
+      }
+      el.textContent = state;
+      el.title = hint || '';
+      if (state.indexOf('on.') === 0 || state.indexOf('on:') === 0){
+        setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, 4000);
+      }
+    } catch(e){}
+  }
   function ensure(){
+    if (Notification.permission === 'denied'){
+      ffPushState('Notifications are turned off on this phone. Android Settings > Apps > ' +
+        (role === 'driver' ? 'Fleet Foot Driver' : 'Fleet Foot Restaurant') + ' > Notifications, turn them on, then reopen the app.');
+      return;
+    }
     return fetch('/api/push/key').then(r => r.json()).then(function(k){
       if (!k.ok || !k.key) return;
       return navigator.serviceWorker.ready.then(function(reg){
@@ -28,10 +51,14 @@
                                             applicationServerKey: b64ToUint8(k.key)});
         });
       }).then(function(sub){
-        if (!sub) return;
+        if (!sub){ ffPushState('Notifications could not be set up on this phone.'); return; }
         var j = sub.toJSON();
         return post('/api/push/subscribe',
-                    {subscription: {endpoint: j.endpoint, keys: j.keys}, role: role});
+                    {subscription: {endpoint: j.endpoint, keys: j.keys}, role: role})
+          .then(function(resp){
+            if (resp && resp.ok){ ffPushState('Notifications on. This phone gets alerts even with the app closed.'); }
+            else { ffPushState('Notifications ready, but sign in first so the phone can register.'); }
+          });
       });
     }).catch(function(){});
   }

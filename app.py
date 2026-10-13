@@ -1956,7 +1956,7 @@ def dispatcher_driver_scope():
     me = session.get("dispatcher_id")
     if not me or is_owner(me):
         return None
-    return dispatcher_view_regions(me) or None
+    return (dispatcher_view_regions(me) or None) if regions_on() else None
 
 
 def driver_in_scope(drv_id, scope=_ALL):
@@ -3659,7 +3659,7 @@ def order_dict(o):
     _so = site_of_region(o["region_id"] if "region_id" in _okeys(o) else None)
     return {
         "id": o["id"], "code": o["code"], "site_name": (_so["name"] if _so is not None else ""),
-        "region_id": int(_rv(o, "region_id") or 0), "region_label": region_label(_rv(o, "region_id")),
+        "region_id": int(_rv(o, "region_id") or 0), "region_label": (region_label(_rv(o, "region_id")) if regions_on() else ""),
         "primary_no": (_rv(o, "primary_no") or ""),
         "site_phone": (nice_phone(_so["phone"] or "") if _so is not None and (_so["phone"] or "").strip() else ""),
         "site_logo": site_logo_url(_so),
@@ -7037,6 +7037,9 @@ def api_board():
            ORDER BY m.id DESC LIMIT 1""").fetchone()
     rests = db().execute("SELECT * FROM restaurants WHERE slug!='oneoff' ORDER BY name").fetchall()
     my_regions = dispatcher_view_regions(session.get("dispatcher_id"))
+    rgon = regions_on()
+    if not rgon:
+        my_regions = set()   # regions off: one area, nobody is scoped or filtered by region
     owner_view = is_owner()
     show_all = request.args.get("all") == "1" and owner_view
     myr = set() if show_all else my_regions
@@ -7066,8 +7069,9 @@ def api_board():
         "region_filtered": bool(my_regions),
         "showing_all": show_all,
         "is_owner": owner_view,
+        "regions_on": rgon,
         # queue rows follow the regions checked in I'm working; Show all regions brings back every one
-        "region_queues": region_queues(myr),
+        "region_queues": region_queues(myr) if rgon else [],
         "brands": brand_pause_rows(),
         "queues_all": not myr,
         "auto": bool(setting("auto_assign")),
@@ -7094,10 +7098,10 @@ def api_board():
                      "pending_request": d["pending_request"], "load": d["load"],
                      "unread": unread.get(d["id"], 0),
                      "max_stack": d["max_stack"], "up_next": rotation.get(d["id"]),
-                     "region_lines": driver_region_lines(lineups, d["id"]),
+                     "region_lines": driver_region_lines(lineups, d["id"]) if rgon else [],
                      "work_regions": sorted(driver_work_regions(d["id"])),
-                     "work_region_names": region_names(driver_work_regions(d["id"])) if all_regions() else "",
-                     "region_choices": driver_region_choices(d["id"], session.get("dispatcher_id")),
+                     "work_region_names": (region_names(driver_work_regions(d["id"])) if (rgon and all_regions()) else ""),
+                     "region_choices": (driver_region_choices(d["id"], session.get("dispatcher_id")) if rgon else []),
                      "region_locked": sorted(driver_locked_regions(d["id"])),
                      "at_limit": (lines.get(d["id"]) or {}).get("at_limit", False),
                      "roster": d["roster"], "group": driver_group(d),
@@ -13173,10 +13177,10 @@ def api_driver_state():
                     "driver": {"name": d["name"], "status": d["status"],
                                "pending_request": d["pending_request"], "max_stack": d["max_stack"],
                                "up_next": rotation.get(d["id"]), "waiting_count": waiting,
-                               "region_lines": driver_region_lines(lineups, d["id"]),
+                               "region_lines": driver_region_lines(lineups, d["id"]) if regions_on() else [],
                                "at_limit": (lines.get(d["id"]) or {}).get("at_limit", False),
                                "roster": d["roster"],
-                               "region_queues": region_queues(dr, detail=False)},
+                               "region_queues": (region_queues(dr, detail=False) if regions_on() else [])},
                     "availability": availability_for(did),
                     "stack": [order_dict(o) for o in mine]})
 

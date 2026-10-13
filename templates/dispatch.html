@@ -517,6 +517,7 @@ function setRoster(which){
 // Region tabs: pick a region and the Pending list, the driver tabs (On shift, Scheduled,
 // Unavailable) and Active runs / Live orders all show only that region.
 let RGTAB = parseInt(localStorage.getItem('ffRgTab')||'0',10) || 0;
+let RGON = true;   // the board answer says regions are off: no region names show
 let RG_LEAD = {};
 function setRgTab(id){
   RGTAB = id || 0;
@@ -533,6 +534,7 @@ function rgDrivers(list){ return RGTAB ? (list||[]).filter(d => rgCovers(d, RGTA
 function rgOrders(list){ return RGTAB ? (list||[]).filter(o => rgSame(o.region_id || 0, RGTAB)) : list; }
 function drawRgTabs(res, pending, active){
   const box = document.getElementById('rgTabs'); if (!box) return;
+  if (!RGON){ box.innerHTML = ''; box.style.display = 'none'; RGTAB = 0; return; }
   const qs = (res.region_queues || []).filter(q => q.id);
   RG_LEAD = {}; qs.forEach(q => { if (q.drive_lead) RG_LEAD[q.id] = q.drive_lead; });
   const regs = qs.map(q => ({id: q.id, name: q.name}));
@@ -1037,6 +1039,8 @@ async function rgSend(oid){
 function drawRegionBar(res){
   const lab = document.getElementById('rgLabel'), b = document.getElementById('rgAll');
   try { drawRegionQueues(res); } catch(e) { console.log('region queues', e); }
+  if (!RGON){ lab.style.display = 'none'; b.style.display = 'none'; return; }
+  lab.style.display = '';
   if (!res.region_filtered){ lab.textContent = 'All regions'; b.style.display = 'none'; return; }
   if (!res.is_owner){ SHOW_ALL_REGIONS = false; lab.textContent = 'Your regions: ' + res.regions_label; b.style.display = 'none'; return; }
   b.style.display = '';
@@ -1052,6 +1056,7 @@ function ffToast(msg){
 let MYRG = null, MYRG_BUSY = false;
 async function drawMyRegions(){
   const box = document.getElementById('myRg'); if(!box || MYRG_BUSY) return;
+  if (!RGON){ box.innerHTML = ''; return; }
   if (!MYRG){ try { MYRG = await jget('/api/regions-list'); } catch(e){ return; } }
   if (!MYRG || !MYRG.ok){ box.innerHTML = ''; return; }
   MYRG.regions = (MYRG.regions||[]).filter(r=>!r.hidden);
@@ -1134,6 +1139,7 @@ async function board(force){
   if (SHOW_ALL_REGIONS) qs.push('all=1');
   const res = await jget('/api/dispatch/board' + (qs.length ? '?' + qs.join('&') : ''));
   if(!res.ok){ window.location='/dispatch/login'; return; }
+  RGON = res.regions_on !== false;
   try { drawRegionBar(res); } catch(e) { console.log('region bar skipped', e); }
   DRIVERS = res.drivers;
   BOARD_TOKENS = res.tokens || [];
@@ -1211,6 +1217,7 @@ async function board(force){
 }
 // Queue and on-driver lists come in region sections (in region order) once orders span more than one region.
 function byRegion(list, card){
+  if (!RGON) return list.map(card).join('');
   const ids = []; const groups = {};
   list.forEach(o => { const k = o.region_id || 0; if (!(k in groups)){ groups[k] = []; ids.push(k); } groups[k].push(o); });
   if (ids.length < 2) return list.map(card).join('');

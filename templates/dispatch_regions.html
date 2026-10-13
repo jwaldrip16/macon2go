@@ -4,9 +4,9 @@
        <a class="btn small" href="/dispatch/schedule">Driver schedule</a>
        <a class="btn small" href="/dispatch/account">Dispatchers</a>
        <a class="btn small" href="/dispatch/logout">Sign out</a></div></div>
-<p class="muted small">Each restaurant belongs to one region and its orders land in that region. Drivers and dispatchers can cover
+{% if regions_on %}<p class="muted small">Each restaurant belongs to one region and its orders land in that region. Drivers and dispatchers can cover
 several regions. Someone with no region checked covers every region. A region picked on someone's availability
-overrides this list while they are working that shift.</p>
+overrides this list while they are working that shift.</p>{% endif %}
 
 {% if not brands_on %}<div class="panel muted small">Brand sites are off, so every page uses the main name, logo and phone from Settings. Turn them on in Settings &gt; Brands and regions.</div>{% endif %}
 {% if not regions_on %}<div class="panel muted small">Regions are off, so customers don't pick an area and menu imports skip the region choice. Turn them on in Settings &gt; Brands and regions.</div>{% endif %}
@@ -22,9 +22,9 @@ overrides this list while they are working that shift.</p>
 <div class="panel mt">
   <h2>Regions</h2>
   <div id="rgList"></div>
-  <div class="row mt"><input id="rgNew" maxlength="40" placeholder="New region, like Phenix City" onkeydown="if(event.key==='Enter')addRegion()">
+  {% if regions_on %}<div class="row mt"><input id="rgNew" maxlength="40" placeholder="New region, like Phenix City" onkeydown="if(event.key==='Enter')addRegion()">
     <label class="small"><input type="checkbox" id="rgMatch" checked> Put restaurants with this town in their address in it</label>
-    <button class="btn primary small" onclick="addRegion()">Add region</button></div>
+    <button class="btn primary small" onclick="addRegion()">Add region</button></div>{% endif %}
 </div>
 
 <div class="panel mt">
@@ -41,6 +41,7 @@ overrides this list while they are working that shift.</p>
 
 <script>
 let RG = null;
+const RGS_ON = {{ 'true' if regions_on else 'false' }};   // regions off: the lists here hide the region names
 function e(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function send(b){
   const r = await jpost('/api/dispatch/regions', b);
@@ -152,7 +153,7 @@ function drawSites(){
     '<div class="muted small">Phone: '+e(s.phone || 'business number')+'</div>' +
     '<div class="muted small">Web address: '+e(s.domains || 'none yet')+(s.home ? (s.rail_off ? ' &middot; on the Railway address, marked unavailable' : ' &middot; also shown on the Railway address') : '')+'</div>' +
     '<div class="muted small">Design: '+designLine(s)+'</div>' +
-    '<div class="muted small">Regions: '+e(RG.regions.filter(r=>r.site_id===s.id).map(r=>r.name).join(', ') || 'none yet')+'</div></span></span>' +
+    (RGS_ON ? '<div class="muted small">Regions: '+e(RG.regions.filter(r=>r.site_id===s.id).map(r=>r.name).join(', ') || 'none yet')+'</div>' : '') + '</span></span>' +
     (RG.owner ? '<span><button class="btn tiny" onclick="siteForm('+s.id+')">Edit</button>' +
       '<label class="btn tiny">Logo<input type="file" accept="image/*" style="display:none" onchange="siteLogo('+s.id+', this)"></label>' +
       (s.logo ? '<button class="btn tiny" onclick="siteLogoReset('+s.id+')">Remove logo</button>' : '') +
@@ -285,6 +286,7 @@ async function siteLogoReset(id){
 }
 function draw(){
   drawSites();
+  if (!RGS_ON){ document.getElementById('rgList').innerHTML = '<p class="muted small">Regions are off. Turn them on in Settings &gt; Brands and regions to manage them here.</p>'; } else {
   document.getElementById('rgList').innerHTML = RG.regions.length ? RG.regions.map(r=>
     '<div class="row between schedrow"><span><strong>'+e(r.name)+'</strong> <span class="muted small">'+r.restaurants+' restaurant'+(r.restaurants===1?'':'s')+'</span>'+
     siteSelect(r)+
@@ -304,15 +306,18 @@ function draw(){
     '<button class="btn tiny" onclick="renRegion('+r.id+')">Rename</button>'+
     '<button class="btn tiny danger" onclick="delRegion('+r.id+')">Delete</button></span></div>').join('')
     : '<p class="muted small">No regions yet. Add one below.</p>';
+  }
   const only = document.getElementById('rsOnly'), keep = only.value;
-  only.innerHTML = '<option value="">All</option><option value="0">No region yet</option>' +
-    RG.regions.map(r=>'<option value="'+r.id+'">'+e(r.name)+'</option>').join('');
-  only.value = keep;
+  only.style.display = RGS_ON ? '' : 'none';
+  only.innerHTML = '<option value="">All</option>' + (RGS_ON ? '<option value="0">No region yet</option>' +
+    RG.regions.map(r=>'<option value="'+r.id+'">'+e(r.name)+'</option>').join('') : '');
+  if (RGS_ON) only.value = keep; else only.value = '';
   drawRests();
-  const boxes = (kind, p) => RG.regions.map(r=>'<label class="rgchip"><input type="checkbox" '+(p.regions.includes(r.id)?'checked ':'')+
+  const boxes = (kind, p) => RGS_ON ? RG.regions.map(r=>'<label class="rgchip"><input type="checkbox" '+(p.regions.includes(r.id)?'checked ':'')+
       (kind==='p' && !RG.owner ? 'disabled title="Only an owner can change dispatcher regions" ' : '')+
-      'onchange="setPerson(\''+kind+'\','+p.id+')" class="'+kind+p.id+'" value="'+r.id+'"> '+e(r.name)+'</label>').join('');
-  const row = (kind, p) => '<div class="schedrow"><div class="row between"><strong>'+e(p.name)+'</strong><span class="muted small">'+
+      'onchange="setPerson(\''+kind+'\','+p.id+')" class="'+kind+p.id+'" value="'+r.id+'"> '+e(r.name)+'</label>').join('') : '';
+  const row = (kind, p) => !RGS_ON ? '<div class="schedrow"><strong>'+e(p.name)+'</strong></div>' :
+      '<div class="schedrow"><div class="row between"><strong>'+e(p.name)+'</strong><span class="muted small">'+
       (p.regions.length ? '' : (kind==='d' ? 'No region yet, cannot set availability' : 'No region yet, cannot set a schedule'))+
       (kind==='p' && !RG.owner ? ' <span class="pill">Set by the owner</span>' : '')+'</span></div><div class="rgpick">'+boxes(kind, p)+'</div></div>';
   document.getElementById('drList').innerHTML = RG.drivers.map(p=>row('d', p)).join('') || '<p class="muted small">No drivers yet.</p>';
@@ -424,9 +429,9 @@ function drawRests(){
     '<tr><td><strong>'+e(r.name)+'</strong><div class="muted small">'+e(r.address)+'</div>'+
     '<div class="muted small">'+rulesLabel(r)+' <button class="btn tiny" onclick="rulesEdit(\'restaurant\','+r.id+')">Minimum &amp; radius</button></div>'+
     '<label class="muted small"><input type="checkbox" '+(r.partner!==0?'checked':'')+' onchange="setPartner('+r.id+', this.checked)"> Partner (unchecked = non-partner service fee)</label></td><td>'+
-    '<select onchange="setRest('+r.id+', this.value)"><option value="0">No region</option>'+
+    (RGS_ON ? '<select onchange="setRest('+r.id+', this.value)"><option value="0">No region</option>'+
     RG.regions.map(g=>'<option value="'+g.id+'"'+(g.id===r.region_id?' selected':'')+'>'+e(g.name)+'</option>').join('')+
-    '</select></td></tr>').join('') || '<tr><td class="muted small">No restaurants match.</td></tr>';
+    '</select>' : '')+'</td></tr>').join('') || '<tr><td class="muted small">No restaurants match.</td></tr>';
 }
 async function addRegion(){
   const n = document.getElementById('rgNew').value.trim(); if(!n) return;

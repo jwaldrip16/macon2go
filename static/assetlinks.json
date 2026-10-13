@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.railway.up.fleetfootdelivery.twa",
+      "sha256_cert_fingerprints": [
+        "13:87:41:4F:64:8C:C3:28:F6:0E:9A:AE:9F:CB:F5:C4:55:19:A6:93:FB:D3:8E:17:E1:CB:40:1D:34:85:4A:E5",
+        "1F:6D:67:A4:5D:7B:1B:62:C8:C5:AF:09:0C:9C:D5:F6:F4:90:DF:BB:4E:02:3A:30:DB:3B:14:DD:87:FB:04:E0"
+      ]
+    }
+  }
+]

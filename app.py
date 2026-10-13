@@ -14401,6 +14401,14 @@ def brand_maskable(size):
         return redirect("/brand/icon-%d.png" % size)
 
 
+@app.get("/.well-known/assetlinks.json")
+def well_known_assetlinks():
+    """Digital Asset Links for the packaged Android apps (removes the browser address bar)."""
+    resp = send_from_directory(APP_DIR_STATIC, "assetlinks.json", mimetype="application/json")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/sw.js")
 def root_service_worker():
     """Service worker served from the site root so it covers every page (needed for the store apps)."""

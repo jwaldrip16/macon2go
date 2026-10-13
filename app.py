@@ -87,6 +87,9 @@ app.secret_key = (os.environ.get("SECRET_KEY") or "").strip() or "dev-secret-cha
 # Logins survive closing the app: the session cookie gets a real expiry date instead of
 # dying as a browser-session cookie. Sixty days keeps phones and the portal signed in.
 app.permanent_session_lifetime = dt.timedelta(days=60)
+# The apps should always show the current site: static files revalidate on every
+# load instead of living in the browser cache for hours.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 # ---------------------------------------------------------------- database
 
@@ -6959,6 +6962,18 @@ def done_order_dict(o):
     if len(_DONE_CACHE) > 3000:
         _DONE_CACHE.clear()
     return d
+
+
+@app.after_request
+def _fresh_pages(resp):
+    # Every page load checks with the server first, so reopening the app picks up
+    # any change right away instead of showing yesterday's copy.
+    try:
+        if (resp.content_type or "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    except Exception:
+        pass
+    return resp
 
 
 @app.after_request

@@ -76,3 +76,16 @@
   }
   window.ffPush = {ensure: ensure};
 })();
+
+// Fresh start: when the driver or kitchen app comes back to the front after being
+// away for a bit, reload it so it always shows the latest version of the site.
+(function(){
+  var hidAt = 0;
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden){ hidAt = Date.now(); return; }
+    var p = location.pathname || '';
+    var staffApp = p.indexOf('/driver') === 0 || p.indexOf('/restaurant') === 0;
+    if (staffApp && hidAt && Date.now() - hidAt > 30000){ location.reload(); }
+    hidAt = 0;
+  });
+})();

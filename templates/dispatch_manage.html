@@ -66,6 +66,14 @@ async function loadStatus(){
 }
 async function open24(id){ await jpost('/api/restaurant/open24', {restaurant_id:id}); loadStatus(); }
 async function pauseRest(id){ await jpost('/api/dispatch/pause-restaurant', {restaurant_id:id}); loadStatus(); }
+async function testPush(id){
+  const s = document.getElementById('pt'+id);
+  if (s) s.textContent = ' sending...';
+  let res;
+  try { res = await jpost('/api/push/test', {driver_id:id}); }
+  catch(e){ if (s) s.textContent = ' failed: '+esc(e.message); return; }
+  if (s) s.textContent = res.ok ? (' sent to '+res.sent+' of '+res.registered+' phone(s)') : (' '+esc(res.error||'failed'));
+}
 loadStatus(); setInterval(function(){ loadStatus().catch(function(){}); }, 15000);
 
 // Drivers load on their own (no menus), so the list shows right away.
@@ -143,6 +151,9 @@ function drawDrivers(res){
     '<span><button class="btn tiny" onclick="setActive('+d.id+','+(d.active?0:1)+')">'+(d.active?'Make inactive':'Make active')+'</button>'+
     (L ? '' : '<button class="btn tiny danger" onclick="delDriver('+d.id+",'"+d.name.replace(/'/g,"")+"'"+')">Delete</button>')+'</span></div>'+
     lockRow+
+    '<div class="row"><span class="muted small">Push alerts: '+(d.push_count||0)+' phone(s) registered</span>'+
+    '<button class="btn tiny" onclick="testPush('+d.id+')">Send test alert</button>'+
+    '<span id="pt'+d.id+'" class="muted small"></span></div>'+
     '<div class="row" style="align-items:flex-end">'+
     '<label class="small" style="flex:1;min-width:140px">Driver name<input id="dn'+d.id+'" value="'+esc(d.name)+'"'+dis+'></label>'+
     '<label class="small" style="flex:1;min-width:140px">Driver phone (10 digits)<input id="dp'+d.id+'" value="'+esc(d.phone)+'" placeholder="3345551234"'+dis+'></label>'+

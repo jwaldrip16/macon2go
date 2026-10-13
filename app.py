@@ -13563,7 +13563,9 @@ def manage_driver_rows():
                                               (d["id"],)).fetchone()["c"],
                 "regions_label": region_names(driver_region_ids(d["id"])) if driver_region_ids(d["id"]) else "No region",
                 "locked": not driver_unlocked(d["id"]),
-                "unlock_block": driver_unlock_block(d["id"]) or ""}
+                "unlock_block": driver_unlock_block(d["id"]) or "",
+                "push_count": db().execute("SELECT COUNT(*) c FROM push_subscriptions WHERE role='driver' AND who=?",
+                                           (d["id"],)).fetchone()["c"]}
                for d in scoped_drivers(db().execute("SELECT * FROM drivers ORDER BY name").fetchall())]
 
 
@@ -14628,6 +14630,28 @@ def api_push_unsubscribe():
         db().execute("DELETE FROM push_subscriptions WHERE endpoint=?", (endpoint,))
         db().commit()
     return jsonify({"ok": True})
+
+@app.post("/api/push/test")
+def api_push_test():
+    """Dispatch sends one test push to a driver's phone and sees the result right here:
+    how many phones that driver has registered, and whether the send went out."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    b = request.get_json(force=True, silent=True) or {}
+    try:
+        did = int(b.get("driver_id") or 0)
+    except (TypeError, ValueError):
+        did = 0
+    if did <= 0:
+        return jsonify({"ok": False, "error": "Pick a driver."}), 400
+    n = db().execute("SELECT COUNT(*) c FROM push_subscriptions WHERE role='driver' AND who=?",
+                     (did,)).fetchone()["c"]
+    if not n:
+        return jsonify({"ok": False, "registered": 0,
+                        "error": "No phone is registered for this driver. Have them open the driver app, sign in, and tap Allow on the alerts bar."})
+    sent = push_driver(did, "Test alert from dispatch. If you see this with the app closed, push is working.",
+                       tag="ff-test")
+    return jsonify({"ok": True, "registered": n, "sent": sent})
 
 
 @app.get("/sw.js")

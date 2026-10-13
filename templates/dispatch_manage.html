@@ -58,19 +58,21 @@ async function loadStatus(){
     '<div class="driver"><div><strong>'+r.name+'</strong> <span class="pill '+
     (r.paused?'red':r.open?'green':'grey')+'">'+
     (r.paused?'paused':r.open?'open':'closed')+'</span>'+
-    '<div class="muted small">'+r.hours+'</div></div>'+
-    '<div><button class="btn tiny" onclick="pauseRest('+r.id+')">'+(r.paused?'Resume':'Pause')+'</button>'+
+    '<div class="muted small">'+r.hours+'</div>'+
+    '<div class="muted small">Push alerts: '+(r.push_count||0)+' phone(s) registered <span id="rt'+r.id+'"></span></div></div>'+
+    '<div><button class="btn tiny" onclick="testPush('+r.id+',1)">Send test alert</button>'+
+    '<button class="btn tiny" onclick="pauseRest('+r.id+')">'+(r.paused?'Resume':'Pause')+'</button>'+
     '<a class="btn tiny" href="/dispatch/restaurants">Hours</a>'+
     '<a class="btn tiny" href="/dispatch/menu/'+r.id+'">Menu</a></div></div>').join('') ||
     '<p class="muted">No restaurants yet.</p>';
 }
 async function open24(id){ await jpost('/api/restaurant/open24', {restaurant_id:id}); loadStatus(); }
 async function pauseRest(id){ await jpost('/api/dispatch/pause-restaurant', {restaurant_id:id}); loadStatus(); }
-async function testPush(id){
-  const s = document.getElementById('pt'+id);
+async function testPush(id, rest){
+  const s = document.getElementById((rest ? 'rt' : 'pt') + id);
   if (s) s.textContent = ' sending...';
   let res;
-  try { res = await jpost('/api/push/test', {driver_id:id}); }
+  try { res = await jpost('/api/push/test', rest ? {restaurant_id:id} : {driver_id:id}); }
   catch(e){ if (s) s.textContent = ' failed: '+esc(e.message); return; }
   if (s) s.textContent = res.ok ? (' sent to '+res.sent+' of '+res.registered+' phone(s)') : (' '+esc(res.error||'failed'));
 }

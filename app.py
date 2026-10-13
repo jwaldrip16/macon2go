@@ -6970,6 +6970,7 @@ def _clear_done_cache(resp):
 
 @app.get("/api/dispatch/board")
 def api_board():
+    _rest_push_counts = manage_rest_push_counts()
     backfill_primary()
     if not dispatcher_required():
         return jsonify({"ok": False}), 403
@@ -7095,7 +7096,8 @@ def api_board():
                     for d in drivers],
         "restaurants": [{"id": r["id"], "name": r["name"], "open": is_open(r),
                          "paused": bool(r["closed_override"]), "open_24": bool(r["open_24"]),
-                         "hours": hours_label(r)}
+                         "hours": hours_label(r),
+                         "push_count": _rest_push_counts.get(r["id"], 0)}
                         for r in rests],
     })
 

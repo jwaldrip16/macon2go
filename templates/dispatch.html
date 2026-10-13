@@ -611,7 +611,7 @@ function renderDrivers(list){
             '<button class="btn tiny" title="Move this stop later" '+(i===arr.length-1?'disabled ':'')+
             'onclick="event.stopPropagation();moveStop('+d.id+','+x.id+',1)">&darr;</button></span> ' : '')+
           'Stop '+(i+1)+' &middot; '+x.code+
-          ' <span class="pill blue">'+x.stage+'</span> <span class="muted small">'+
+          ' <span class="pill blue">'+x.stage+'</span>'+(x.status_age_sec!==null && x.status_age_sec!==undefined ? regOAge(x)||'' : '')+' <span class="muted small">'+
           x.restaurant+' &rarr; '+x.customer+'</span></div>').join('')+'</div>'
       : '<div class="muted small">no active run</div>';
     const shift = '<div class="btnrow"><button class="btn tiny'+(d.status==='online'?' on':'')+
@@ -914,7 +914,7 @@ function renderCompleted(res){
   document.getElementById('completed').innerHTML = (res.completed||[]).map(o=>
     '<div class="order"><div class="order-head"><strong>'+esc(ordMain(o))+'</strong>'+(ordSub(o) ? ' <span class="muted small">'+esc(ordSub(o))+'</span>' : '')+' '+refPill(o)+tokenPill(o)+'<span class="pill '+
     (swpOrder(o) ? '<span class="pill amber">swapped</span> '
-                 : '<span class="pill '+(o.dispatch_status==='delivered'?'green':'grey')+'">'+o.dispatch_status+'</span> ')+
+                 : '<span class="pill '+(o.dispatch_status==='delivered'?'green':'grey')+'">'+o.dispatch_status+'</span>'+oAgePill(o)+' ')+
     '<span class="muted small">'+(o.delivered_time || (o.delivered_at||'').replace('T',' '))+'</span></div>'+
     restLine(o)+
     '<div class="order-actions">'+
@@ -1553,6 +1553,37 @@ function setToken(oid){
 function fmtPhone(p){ const d = String(p||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
   return d.length===10 ? '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6) : String(p||''); }
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// Ticking timer: how long each order has been in its current dispatch status.
+let ORDER_STATUS_AT = {};   // order id -> {age: seconds at render, at: Date.now() of that render}
+function regOAge(o){
+  if (!o) return null;
+  const a = (o.status_age_sec === null || o.status_age_sec === undefined) ? null : o.status_age_sec;
+  if (a === null) delete ORDER_STATUS_AT[o.id];
+  else ORDER_STATUS_AT[o.id] = {age: a, at: Date.now()};
+  return a;
+}
+function oAgePill(o){
+  const a = regOAge(o);
+  return a === null ? '' :
+    '<span class="pill grey" data-ostage="'+o.id+'" title="Time since the order status last changed">'+durSince(a + (Date.now()-ORDER_STATUS_AT[o.id].at)/1000)+'</span>';
+}
+function durSince(sec){
+  if (sec === null || sec === undefined) return '';
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return 'just changed';
+  const m = Math.floor(sec/60);
+  if (m < 60) return m+'m';
+  const h = Math.floor(m/60);
+  if (h < 24) return h+'h '+(m%60)+'m';
+  return Math.floor(h/24)+'d '+(h%24)+'h';
+}
+setInterval(function(){
+  document.querySelectorAll('[data-ostage]').forEach(function(el){
+    const a = ORDER_STATUS_AT[el.getAttribute('data-ostage')];
+    if (!a) return;
+    el.textContent = durSince(a.age + (Date.now()-a.at)/1000);
+  });
+}, 30000);
 function orderCard(o, opts, drivers){
   const timer = (o.timer_seconds!==null && o.kitchen_status==='preparing')
     ? '<span class="pill amber">'+Math.max(0,Math.ceil(o.timer_seconds/60))+' min</span>' : '';
@@ -1566,7 +1597,7 @@ function orderCard(o, opts, drivers){
         (o.dispatch_status==='awaiting_payment' ? '<span class="pill blue">waiting on payment</span> '
           : (o.house ? '<span class="pill green">house account</span> ' : (o.paid ? '<span class="pill green">paid</span> ' : '')))
       : '<span class="pill '+(o.kitchen_status==='ready'?'green':o.kitchen_status==='preparing'?'amber':'grey')+'">'
-        +(o.kitchen_status==='pending'?(o.uses_app?'sent to kitchen':(o.manual_state==='ordering'?'ordering in process':'needs ordering')+(o.order_method==='online'?' online':' by phone')):o.kitchen_status)+'</span> <span class="pill blue">'+o.dispatch_status+'</span> ')+timer+' '+q+' '+hold+
+        +(o.kitchen_status==='pending'?(o.uses_app?'sent to kitchen':(o.manual_state==='ordering'?'ordering in process':'needs ordering')+(o.order_method==='online'?' online':' by phone')):o.kitchen_status)+'</span> <span class="pill blue">'+o.dispatch_status+'</span>'+oAgePill(o)+' ')+timer+' '+q+' '+hold+
     ' '+srcPill(o)+
     payPill(o)+
     (o.tip_cents ? ' <span class="pill grey">tip '+o.tip+(o.tip_pct!==null && o.tip_pct!==undefined ? ' ('+o.tip_pct+'%)' : '')+'</span>' : '')+

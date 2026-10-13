@@ -406,6 +406,7 @@ def init_db():
     ensure_column(con, "availability", "decided_by", "TEXT")
     ensure_column(con, "availability", "decided_at", "TEXT")
     ensure_column(con, "availability", "reply", "TEXT")
+    ensure_column(con, "orders", "status_changed_at", "TEXT")
     ensure_column(con, "orders", "issue", "TEXT")
     ensure_column(con, "orders", "issue_note", "TEXT")
     ensure_column(con, "orders", "cloned_from", "TEXT")
@@ -667,6 +668,11 @@ def init_db():
       WHEN NEW.dispatch_status='assigned' AND (OLD.dispatch_status IS NOT 'assigned'
            OR NEW.driver_id IS NOT OLD.driver_id OR NEW.paged_at IS NOT OLD.paged_at)
       BEGIN UPDATE orders SET driver_paged_at=""" + _ts + """ WHERE id=NEW.id; END;
+    CREATE TRIGGER IF NOT EXISTS trg_order_status_ts_ins AFTER INSERT ON orders
+      BEGIN UPDATE orders SET status_changed_at=""" + _ts + """ WHERE id=NEW.id; END;
+    CREATE TRIGGER IF NOT EXISTS trg_order_status_ts_upd AFTER UPDATE OF dispatch_status ON orders
+      WHEN NEW.dispatch_status IS NOT OLD.dispatch_status
+      BEGIN UPDATE orders SET status_changed_at=""" + _ts + """ WHERE id=NEW.id; END;
     """)
     # A finished order never keeps asking the kitchen to accept it, whichever screen finished it.
     con.executescript("""
@@ -3602,6 +3608,16 @@ def parse_due_by(val):
     raise ValueError("bad due_by")
 
 
+def status_age_sec(ts):
+    """Seconds since the order's dispatch status last changed (server clock; feeds the board's ticking timer)."""
+    if not ts:
+        return None
+    try:
+        return max(0, int((dt.datetime.now() - dt.datetime.fromisoformat(ts)).total_seconds()))
+    except Exception:
+        return None
+
+
 def order_dict(o):
     r = db().execute("SELECT * FROM restaurants WHERE id=?", (o["restaurant_id"],)).fetchone()
     d = db().execute("SELECT * FROM drivers WHERE id=?", (o["driver_id"],)).fetchone() if o["driver_id"] else None
@@ -3637,6 +3653,7 @@ def order_dict(o):
         "dispatch_note": o["dispatch_note"],
         "customer_nav": customer_nav_url(o["address"], o["lat"], o["lng"]),
         "paged_at": (o["paged_at"] if "paged_at" in o.keys() else "") or "",
+        "status_age_sec": status_age_sec(o["status_changed_at"] if "status_changed_at" in o.keys() else None),
         "items": _safe_items(o["items"]),
         "lines": [line_label(x) for x in json.loads(o["items"])],
         "line_parts": [line_parts(x) for x in _safe_items(o["items"]) if isinstance(x, dict)],
@@ -7046,7 +7063,7 @@ def api_board():
                      "status_label": status_label(d), "roster_label": roster_label(d),
                      "on_orders": [{"id": x["id"], "code": x["code"], "stage": x["dispatch_status"],
                                     "restaurant": x["restaurant"], "customer": x["customer"],
-                                    "stop": x["stack_seq"]}
+                                    "stop": x["stack_seq"], "status_age_sec": x["status_age_sec"]}
                                    for x in [od(y) for y in sorted(
                                        (y for y in live_all if y["driver_id"] == d["id"] and y["dispatch_status"]
                                         in ('assigned','received','at_restaurant','enroute')),

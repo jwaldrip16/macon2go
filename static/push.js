@@ -32,7 +32,7 @@
       el.textContent = state;
       el.title = hint || '';
       if (state.indexOf('on.') === 0 || state.indexOf('on:') === 0){
-        setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, 4000);
+        setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, 5000);
       }
     } catch(e){}
   }

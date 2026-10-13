@@ -392,7 +392,6 @@ def init_db():
         created_at TEXT)""")
     ensure_column(con, "drivers", "roster_day", "TEXT")
     ensure_column(con, "drivers", "online_since", "TEXT")
-    ensure_column(con, "drivers", "status_changed_at", "TEXT")
     ensure_column(con, "drivers", "last_assigned_at", "TEXT")
     ensure_column(con, "drivers", "last_completed_at", "TEXT")
     ensure_column(con, "drivers", "roster", "TEXT NOT NULL DEFAULT 'scheduled'")
@@ -6928,16 +6927,6 @@ def _clear_done_cache(resp):
     return resp
 
 
-def status_age_sec(ts):
-    """Seconds since the driver's status last changed (server clock; feeds the board's ticking timer)."""
-    if not ts:
-        return None
-    try:
-        return max(0, int((dt.datetime.now() - dt.datetime.fromisoformat(ts)).total_seconds()))
-    except Exception:
-        return None
-
-
 @app.get("/api/dispatch/board")
 def api_board():
     backfill_primary()
@@ -7055,7 +7044,6 @@ def api_board():
                      "today_shift": ", ".join(scheduled_today(d["id"])),
                      "availability": availability_for(d["id"]), "location": loc_block(d),
                      "status_label": status_label(d), "roster_label": roster_label(d),
-                     "status_age_sec": status_age_sec(d["status_changed_at"]),
                      "on_orders": [{"id": x["id"], "code": x["code"], "stage": x["dispatch_status"],
                                     "restaurant": x["restaurant"], "customer": x["customer"],
                                     "stop": x["stack_seq"]}
@@ -9392,7 +9380,7 @@ def api_driver_roster():
         if load:
             return jsonify({"ok": False,
                             "error": "That driver still has " + str(load) + " live order(s)."}), 400
-        db().execute("UPDATE drivers SET status='offline', online_since=NULL, status_changed_at=? WHERE id=?", (now(), did))
+        db().execute("UPDATE drivers SET status='offline', online_since=NULL WHERE id=?", (did,))
         activity_mark("driver", did, None)
     auto_msg("drv_roster", "INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
                  (did, "dispatch", "Dispatch moved you to " + roster.replace("_", " ") + ".", now()))
@@ -11404,10 +11392,10 @@ def api_driver_active():
         if live:
             return jsonify({"ok": False, "error": "%s still has %d live order%s. Move or finish %s first."
                             % (d["name"], live, "" if live == 1 else "s", "it" if live == 1 else "them")}), 400
-        db().execute("UPDATE drivers SET active=0, status='offline', pending_request=NULL, status_changed_at=? WHERE id=?", (now(), did))
+        db().execute("UPDATE drivers SET active=0, status='offline', pending_request=NULL WHERE id=?", (did,))
         activity_mark("driver", did, None)
     else:
-        db().execute("UPDATE drivers SET active=1, status_changed_at=? WHERE id=?", (now(), did))
+        db().execute("UPDATE drivers SET active=1 WHERE id=?", (did,))
     db().commit()
     log("driver_active", d["name"] + (" active" if want else " inactive") + " by " + (session.get("dispatcher_name") or "dispatch"))
     auto_assign()
@@ -12607,9 +12595,8 @@ def set_driver_status(driver_id, status, reply):
     """Dispatch-only. Nothing in the driver app calls this directly."""
     was = db().execute("SELECT status FROM drivers WHERE id=?", (driver_id,)).fetchone()
     log_driver(driver_id, "Dispatch set " + status + " (was " + (was["status"] if was else "?") + ")", status=status)
-    ts = now()
-    db().execute("UPDATE drivers SET status=?, pending_request=NULL, last_seen=?, status_changed_at=? WHERE id=?",
-                 (status, ts, ts, driver_id))
+    db().execute("UPDATE drivers SET status=?, pending_request=NULL, last_seen=? WHERE id=?",
+                 (status, now(), driver_id))
     activity_mark("driver", driver_id, None if status == "offline" else ("break" if "break" in status else "online"))
     if status == "online" and (not was or was["status"] != "online"):
         # clocking on puts you at the back of the line, not the front

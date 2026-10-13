@@ -1777,6 +1777,8 @@ def dispatcher_region_ids(did):
 def slot_regions_for(kind, pid, raw, by_self):
     """Regions for one availability slot. Only regions dispatch (drivers) or the owner
     (dispatchers) assigned count; nothing assigned means no availability at all."""
+    if not regions_on():
+        return "", None
     assigned = driver_region_ids(pid) if kind == "driver" else dispatcher_region_ids(pid)
     name = ""
     if not by_self:
@@ -9648,7 +9650,7 @@ def week_block(driver_id, week_start):
             "reply": (mine[0]["reply"] or "") if mine else "",
             "id": mine[0]["id"] if mine else None,
             "regions": sorted(slot_regions(mine[0])) if mine else [],
-            "region_label": region_names(slot_regions(mine[0])) if mine and slot_regions(mine[0]) else "",
+            "region_label": region_names(slot_regions(mine[0])) if mine and regions_on() and slot_regions(mine[0]) else "",
             "closed": bool(off_today(driver_id, date.isoformat())),
             "region_closed": region_closed_label_for(driver_region_ids(driver_id), date),
         })
@@ -9656,7 +9658,7 @@ def week_block(driver_id, week_start):
     opens = week_opens(week_start)
     _rg = driver_region_ids(driver_id)
     return {"week_start": ws, "label": week_label(week_start),
-            "regions_label": region_names(_rg) if _rg else "",
+            "regions_label": region_names(_rg) if regions_on() and _rg else "",
             "opens_at": opens.isoformat(timespec="minutes"),
             "opens_human": pretty_day(week_opens(week_start).date()),
             "window_open": dt.datetime.now() >= opens and dt.datetime.now() <= due,
@@ -9690,7 +9692,7 @@ def availability_for(driver_id, only_approved=False):
              "decided_by": r["decided_by"] or "",
              "week_start": r["week_start"] or "",
              "regions": sorted(slot_regions(r)),
-             "region_label": (region_names(slot_regions(r)) if slot_regions(r) else ""),
+             "region_label": (region_names(slot_regions(r)) if regions_on() and slot_regions(r) else ""),
              "date": ((dt.date.fromisoformat(r["week_start"]) + dt.timedelta(days=r["dow"])).isoformat()
                       if r["week_start"] else ""),
              "date_label": (short_date(dt.date.fromisoformat(r["week_start"]) + dt.timedelta(days=r["dow"]))
@@ -10077,12 +10079,12 @@ def api_dispatch_schedule():
         pending += len([a for a in av if a["status"] == "pending"])
         pending += len([o for o in off if o["status"] == "pending"])
         out.append({"id": d["id"], "name": d["name"], "phone": d["phone"],
-                    "regions_label": region_names(driver_region_ids(d["id"])) if driver_region_ids(d["id"]) else "",
+                    "regions_label": region_names(driver_region_ids(d["id"])) if regions_on() and driver_region_ids(d["id"]) else "",
                     "roster": driver_group(d), "status": d["status"],
                     "off_today": off_today(d["id"], today),
                     "availability": av, "time_off": off})
     return jsonify({"ok": True, "days": DOW_NAMES, "today": today,
-                    "drivers": out, "pending": pending})
+                    "regions_on": regions_on(), "drivers": out, "pending": pending})
 
 
 @app.post("/api/dispatch/schedule")
@@ -10508,7 +10510,7 @@ def dispatcher_avail_payload():
                   "status": (s["status"] or "approved"), "decided_by": s["decided_by"] or "",
                   "on_now": (s["status"] or "approved") == "approved" and _disp_slot_on(s, nowdt),
                   "regions": sorted(slot_regions(s)),
-                  "region_label": (region_names(slot_regions(s)) if slot_regions(s) else "")} for s in rows]
+                  "region_label": (region_names(slot_regions(s)) if regions_on() and slot_regions(s) else "")} for s in rows]
         mins = 0
         for s in rows:
             if (s["status"] or "approved") != "approved":
@@ -11027,6 +11029,12 @@ def api_find_order():
 def api_regions_list():
     if not (session.get("dispatcher_id") or session.get("driver_id")):
         return jsonify({"ok": False}), 403
+    if not regions_on():
+        # regions are off (Settings > Brands and regions): one area, nobody picks one
+        return jsonify({"ok": True, "regions": [], "today_allowed": [], "today_pick": [],
+                        "mine": [], "driver": bool(session.get("driver_id") and not session.get("dispatcher_id")),
+                        "none_assigned": False, "owner": is_owner() if session.get("dispatcher_id") else False,
+                        "regions_on": False})
     stamp_regions()
     as_driver = bool(session.get("driver_id") and not session.get("dispatcher_id"))
     mine = (driver_region_ids(session["driver_id"]) if as_driver
@@ -11047,7 +11055,7 @@ def api_regions_list():
                                        "locked": x in _lk, "hidden": x in _hid} for x in sorted(allowed, key=lambda i: names[i].lower())],
                     "today_pick": sorted(day_pick(kind, pid)),
                     "mine": sorted(mine), "driver": as_driver, "none_assigned": as_driver and not mine,
-                    "owner": is_owner() if session.get("dispatcher_id") else False})
+                    "owner": is_owner() if session.get("dispatcher_id") else False, "regions_on": True})
 
 
 @app.post("/api/day-regions")

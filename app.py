@@ -84,6 +84,9 @@ app.config["PREFERRED_URL_SCHEME"] = "https"
 # Blank or missing now falls back to a built-in key so sign-in keeps working;
 # set a long random SECRET_KEY in Railway for real security.
 app.secret_key = (os.environ.get("SECRET_KEY") or "").strip() or "dev-secret-change-me"
+# Logins survive closing the app: the session cookie gets a real expiry date instead of
+# dying as a browser-session cookie. Sixty days keeps phones and the portal signed in.
+app.permanent_session_lifetime = dt.timedelta(days=60)
 
 # ---------------------------------------------------------------- database
 
@@ -6381,6 +6384,7 @@ def dispatch_login():
         if row:
             session["dispatcher_id"] = row["id"]
             session["dispatcher_name"] = row["name"]
+            session.permanent = True
             return redirect(url_for("dispatch"))
         err = "Wrong username or password."
     try:
@@ -12781,6 +12785,7 @@ def driver_login():
         elif row:
             session["driver_id"] = row["id"]
             session["driver_name"] = row["name"]
+            session.permanent = True
             return redirect(url_for("driver"))
         else:
             err = "No driver with that phone and PIN."
@@ -13414,6 +13419,7 @@ def rest_login():
         elif row:
             session["restaurant_id"] = row["id"]
             session["restaurant_name"] = row["name"]
+            session.permanent = True
             return redirect(url_for("rest_home"))
         else:
             err = "Wrong store code or PIN."

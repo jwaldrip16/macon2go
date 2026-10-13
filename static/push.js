@@ -31,7 +31,8 @@
       }
       el.textContent = state;
       el.title = hint || '';
-      if (state.indexOf('on.') === 0 || state.indexOf('on:') === 0){
+      if (state.indexOf('Notifications on') === 0){
+        // good news only: the "all set" line clears itself after 5 seconds, warnings stay
         setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, 5000);
       }
     } catch(e){}

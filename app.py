@@ -12624,6 +12624,8 @@ def api_chat_send(driver_id):
                  (driver_id, sender, who, session.get("dispatcher_id") if sender == "dispatch" else None,
                   body, now(), 0 if sender == "driver" else 1))
     db().commit()
+    if sender == "dispatch":
+        push_driver(driver_id, body, title="Message from dispatch")
     low = body.lower()
     if sender == "driver":
         want = None
@@ -13548,6 +13550,12 @@ def api_rest_open24():
 
 
 # ---------------- dispatcher management APIs ----------------
+def manage_rest_push_counts():
+    """Phones registered per restaurant, for the manage page's test-alert buttons."""
+    return {r["who"]: r["c"] for r in db().execute(
+        "SELECT who, COUNT(*) c FROM push_subscriptions WHERE role='kitchen' GROUP BY who").fetchall()}
+
+
 def manage_driver_rows():
     """Driver cards for Restaurants and drivers (no menus, so it is quick)."""
     return [{"id": d["id"], "name": d["name"], "phone": d["phone"], "pin": d["pin"],
@@ -13594,6 +13602,7 @@ def api_catalog():
                       "paused": r["closed_override"], "open_24": r["open_24"], "items": items})
     drivers = manage_driver_rows()
     return jsonify({"ok": True, "restaurants": rests, "drivers": drivers, "owner": is_owner(),
+                    "push_counts": {str(k): v for k, v in manage_rest_push_counts().items()},
                     "branch_accounts": [{"id": a["id"], "name": a["name"]} for a in _br_rows()]})
 
 
@@ -14461,6 +14470,29 @@ PUSH_ICON = {"driver": "/static/icons/driver-192.png",
              "kitchen": "/static/icons/kitchen-192.png"}
 
 
+def _push_log(role, who, title, sent, nsubs, error=""):
+    """One row per push attempt, so a phone that misses alerts can be checked after the fact."""
+    try:
+        db().execute("""CREATE TABLE IF NOT EXISTS push_log(
+                        id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, role TEXT,
+                        who INTEGER, title TEXT, sent INTEGER, subs INTEGER, error TEXT)""")
+        db().execute("INSERT INTO push_log(created_at,role,who,title,sent,subs,error) VALUES(?,?,?,?,?,?,?)",
+                     (now(), role, who, (title or "")[:120], sent, nsubs, (error or "")[:300]))
+        db().commit()
+    except Exception:
+        pass
+
+
+def push_log_rows(role, who, limit=5):
+    try:
+        return [{"at": r["created_at"], "title": r["title"], "sent": r["sent"], "subs": r["subs"],
+                 "error": r["error"]}
+                for r in db().execute("SELECT * FROM push_log WHERE role=? AND who=? ORDER BY id DESC LIMIT ?",
+                                      (role, who, limit)).fetchall()]
+    except Exception:
+        return []
+
+
 def vapid_keys():
     """This site's push keys. Generated once, kept in settings."""
     con = db()
@@ -14503,6 +14535,7 @@ def ffpush(role, who, title, body, tag=None, url=None):
     payload = json.dumps({"title": title or "Fleet Foot Delivery", "body": body,
                           "tag": tag or "", "url": url or "/", "icon": PUSH_ICON.get(role)})
     sent = 0
+    last_err = ""
     for s in subs:
         try:
             webpush(subscription_info={"endpoint": s["endpoint"],
@@ -14511,6 +14544,7 @@ def ffpush(role, who, title, body, tag=None, url=None):
                     vapid_claims={"sub": "mailto:johnq.waldrip@gmail.com"})
             sent += 1
         except Exception as e:
+            last_err = str(e)[:200]
             code = getattr(getattr(e, "response", None), "status_code", 0) or 0
             try:
                 if code in (400, 401, 404, 410):
@@ -14524,6 +14558,7 @@ def ffpush(role, who, title, body, tag=None, url=None):
                 db().commit()
             except Exception:
                 pass
+    _push_log(role, who, title, sent, len(subs), last_err)
     return sent
 
 
@@ -14638,20 +14673,26 @@ def api_push_test():
     if not dispatcher_required():
         return jsonify({"ok": False}), 403
     b = request.get_json(force=True, silent=True) or {}
+    role, who = "driver", 0
     try:
-        did = int(b.get("driver_id") or 0)
+        who = int(b.get("driver_id") or 0) or int(b.get("restaurant_id") or 0)
+        if b.get("restaurant_id"):
+            role = "kitchen"
     except (TypeError, ValueError):
-        did = 0
-    if did <= 0:
-        return jsonify({"ok": False, "error": "Pick a driver."}), 400
-    n = db().execute("SELECT COUNT(*) c FROM push_subscriptions WHERE role='driver' AND who=?",
-                     (did,)).fetchone()["c"]
+        who = 0
+    if who <= 0:
+        return jsonify({"ok": False, "error": "Pick who gets the test."}), 400
+    n = db().execute("SELECT COUNT(*) c FROM push_subscriptions WHERE role=? AND who=?",
+                     (role, who)).fetchone()["c"]
     if not n:
-        return jsonify({"ok": False, "registered": 0,
-                        "error": "No phone is registered for this driver. Have them open the driver app, sign in, and tap Allow on the alerts bar."})
-    sent = push_driver(did, "Test alert from dispatch. If you see this with the app closed, push is working.",
-                       tag="ff-test")
-    return jsonify({"ok": True, "registered": n, "sent": sent})
+        return jsonify({"ok": False, "registered": 0, "role": role,
+                        "error": "No phone is registered for this " + ("restaurant" if role == "kitchen" else "driver") +
+                                 ". Have them open the app, sign in, and tap Allow on the alerts bar."})
+    sent = ffpush(role, who, "Fleet Foot Delivery",
+                  "Test alert from dispatch. If you see this with the app closed, push is working.",
+                  tag="ff-test", url="/restaurant" if role == "kitchen" else "/driver")
+    return jsonify({"ok": True, "registered": n, "sent": sent, "role": role,
+                    "log": push_log_rows(role, who)})
 
 
 @app.get("/sw.js")

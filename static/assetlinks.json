@@ -11,5 +11,29 @@
         "1F:6D:67:A4:5D:7B:1B:62:C8:C5:AF:09:0C:9C:D5:F6:F4:90:DF:BB:4E:02:3A:30:DB:3B:14:DD:87:FB:04:E0"
       ]
     }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.railway.up.fleetfootdelivery.twa.driver",
+      "sha256_cert_fingerprints": [
+        "77:F7:2F:9A:47:FA:85:C0:96:3B:D2:03:91:0D:37:FA:12:A5:3A:C1:08:49:78:DD:0B:BC:19:BB:09:D0:0F:35"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.railway.up.fleetfootdelivery.twa.kitchen",
+      "sha256_cert_fingerprints": [
+        "06:05:8D:B0:CC:C4:8C:45:31:F5:8E:5A:18:7A:92:A4:6B:81:38:49:CE:5E:9D:09:1C:3C:00:4C:9D:FD:AC:D7"
+      ]
+    }
   }
 ]

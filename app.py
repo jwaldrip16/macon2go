@@ -10037,7 +10037,8 @@ def api_driver_schedule():
     did = session.get("driver_id")
     if not did:
         return jsonify({"ok": False}), 403
-    return jsonify({"ok": True, "availability": availability_for(did), "time_off": time_off_for(did)})
+    return jsonify({"ok": True, "availability": availability_for(did), "time_off": time_off_for(did),
+                    "this_week": week_block(did, current_week_start())})
 
 
 @app.get("/api/dispatch/availability/<int:did>")

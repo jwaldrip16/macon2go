@@ -111,7 +111,8 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
 
 <div id="paneSched" class="hidden">
   <aside class="panel"><h2>My time this week</h2>
-    <div id="myAct" class="muted small">Loading…</div></aside>
+    <div id="myWeek">Loading…</div>
+    <div id="myAct" class="muted small" style="margin-top:6px">Loading…</div></aside>
   <aside class="panel"><h2>Next week</h2>
     <div id="weekDue" class="duebar"></div>
     <div class="row">
@@ -933,10 +934,24 @@ async function loadMyAct(){
   el.innerHTML = 'Online <b>'+p.total+'</b>, break '+p.break_total+(p.scheduled?', scheduled '+p.scheduled:'')+
     '<br>'+r.days.map((d,i)=>p.days[i].online?d+': '+p.days[i].online:'').filter(Boolean).join(' &middot; ');
 }
+function fmtT(t){
+  if(!t) return '';
+  const p = (t||'').split(':'); let hh = +p[0], mm = p[1] || '00';
+  const ap = hh >= 12 ? 'pm' : 'am'; hh = hh % 12; if(hh === 0) hh = 12;
+  return hh + ':' + mm + ap;
+}
+function renderMyWeek(w){
+  const el = document.getElementById('myWeek'); if(!el || !w) return;
+  const days = (w.days || []).filter(d => !d.off);
+  el.innerHTML = days.length
+    ? days.map(d => '<div class="row between"><span><b>' + d.day + '</b> ' + fmtT(d.start) + '-' + fmtT(d.end) +
+        (d.region_label ? ' <span class="small">' + rgMark(d.region_label) + '</span>' : '') + '</span>' + stPill(d.status) + '</div>').join('')
+    : '<div class="muted small">No days on the schedule this week yet. Pick your hours under Next week.</div>';
+}
 async function refreshSchedule(){
   loadMyAct();
   const r = await jget('/api/driver/schedule');
-  if(r.ok) renderAvail(r.availability, r.time_off);
+  if(r.ok){ renderAvail(r.availability, r.time_off); renderMyWeek(r.this_week); }
 }
 async function addAvail(){
   const r = await jpost('/api/driver/availability', {dow:+document.getElementById('avDow').value,

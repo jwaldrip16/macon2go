@@ -565,8 +565,31 @@ function chatNote(d){
   return (d.unread ? ' <span class="pill red" title="unread messages">'
                      + d.unread + ' new</span>' : '');
 }
+// Ticking timer: how long each driver has been in their current status.
+let DRV_STATUS_AT = {};   // driver id -> {age: seconds at payload time, at: Date.now() of that payload}
+function durSince(sec){
+  if (sec === null || sec === undefined) return '';
+  sec = Math.max(0, Math.floor(sec));
+  if (sec < 60) return 'just changed';
+  const m = Math.floor(sec/60);
+  if (m < 60) return m+'m';
+  const h = Math.floor(m/60);
+  if (h < 24) return h+'h '+(m%60)+'m';
+  return Math.floor(h/24)+'d '+(h%24)+'h';
+}
+setInterval(function(){
+  document.querySelectorAll('[data-statusage]').forEach(function(el){
+    const a = DRV_STATUS_AT[el.getAttribute('data-statusage')];
+    if (!a) return;
+    el.textContent = durSince(a.age + (Date.now()-a.at)/1000);
+  });
+}, 30000);
 function renderDrivers(list){
   const all = (list||[]).slice();
+  (list||[]).forEach(function(d){
+    if (d.status_age_sec === null || d.status_age_sec === undefined) { delete DRV_STATUS_AT[d.id]; }
+    else { DRV_STATUS_AT[d.id] = {age: d.status_age_sec, at: Date.now()}; }
+  });
   const counts = {active: all.filter(d=>d.status!=='offline').length,
                   scheduled: all.filter(d=>d.status==='offline' && grp(d)==='scheduled').length,
                   unavailable: all.filter(d=>d.status==='offline' && grp(d)==='unavailable').length};
@@ -588,6 +611,10 @@ function renderDrivers(list){
     t.textContent = base + ' (' + (counts[t.dataset.roster]||0) + ')';
   });
   document.getElementById('drivers').innerHTML = shown.map(d=>{
+    const sa = DRV_STATUS_AT[String(d.id)];
+    const sTimer = (sa && sa.age !== null && sa.age !== undefined)
+      ? '<span class="pill grey" data-statusage="'+d.id+'" title="Time since the status last changed">'+durSince(sa.age + (Date.now()-sa.at)/1000)+'</span>'
+      : '';
     const req = d.pending_request ? '<div class="pill amber">Requests: '+d.pending_request+'</div>' : '';
     const msg = d.unread ? '<button class="pill red" title="unread driver messages" '+
       'onclick="openChatWith('+d.id+')">'+d.unread+' new message'+(d.unread===1?'':'s')+
@@ -638,7 +665,7 @@ function renderDrivers(list){
     return '<div class="driver dropzone" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" '+
       'ondrop="dropOnDriver(event,'+d.id+')"><div class="drvhead"><strong>'+d.name+'</strong> <span class="pill '+
       (d.status==='online'?'green':d.status==='break'?'amber':'grey')+'">'+
-      (d.status_label || d.status)+'</span> '+turn+(d.work_region_names ? ' <span class="pill grey" title="Regions this driver is in today">Region: '+esc(d.work_region_names)+'</span>' : '')+
+      (d.status_label || d.status)+'</span> '+(sTimer?sTimer+' ':'')+turn+(d.work_region_names ? ' <span class="pill grey" title="Regions this driver is in today">Region: '+esc(d.work_region_names)+'</span>' : '')+
       ' <span class="pill '+((d.max_stack||0)>=999?'blue':'grey')+'" style="cursor:pointer" title="Click to change how many orders this driver can carry" onclick="stackPick('+d.id+')">Stack: '+((d.max_stack||0)>=999?'unlimited':(d.max_stack||3))+'</span>'+
       ((d.on_orders||[]).length>=2 ? ' <span class="pill green" style="cursor:pointer" title="Put this driver\'s stops in the shortest drop-off order" onclick="routeSort('+d.id+')">Best route</span>' : '')+
       ' <span class="pill '+(grp(d)==='unavailable'?

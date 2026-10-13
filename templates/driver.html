@@ -128,7 +128,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
     <h2 class="mt">Your usual week</h2>
     <p class="muted small">Your standing pattern. The calendar above is what you actually work next week.</p>
     <div id="week" class="week"></div>
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap">
       <select id="avDow">
         <option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option>
         <option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option>
@@ -141,10 +141,10 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
     </div>
     <div id="avail" class="muted small"></div>
     <h2 class="mt">Time off</h2>
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap">
       <input id="offStart" type="date"><input id="offEnd" type="date">
     </div>
-    <div class="row">
+    <div class="row" style="flex-wrap:wrap">
       <input id="offWhy" placeholder="Reason, optional">
       <button class="btn tiny" onclick="askOff()">Request off</button>
     </div>
@@ -910,13 +910,18 @@ function renderAvail(av, off){
   AV_LAST = [av, off];
   av = av || []; off = off || [];
   document.getElementById('week').innerHTML = DAYS.map((d,i)=>{
-    const mine = av.filter(a=>a.dow===i);
+    const seen = {}, mine = [];
+    av.filter(a=>a.dow===i).forEach(a=>{
+      const k = a.start+'|'+a.end+'|'+(a.region_label||'');
+      if (seen[k]){ if (a.status==='approved') seen[k].status='approved'; return; }
+      seen[k] = a; mine.push(a);
+    });
     return '<div class="wday"><div class="wname">'+d+'</div>'+
       (mine.length ? mine.map(a=>'<div class="wslot '+a.status+'">'+a.start+'-'+a.end+(a.region_label?'<br><span class="small">'+rgMark(a.region_label)+'</span>':'')+'</div>').join('')
                    : '<div class="wslot none">off</div>')+'</div>';
   }).join('');
   document.getElementById('avail').innerHTML = av.length ? av.map(a=>
-    '<div class="row between"><span>'+a.day+' '+a.start+'-'+a.end+' '+stPill(a.status)+regionTag(a.region_label)+
+    '<div class="row between"><span>'+a.day+(a.date_label?' '+a.date_label:'')+' '+a.start+'-'+a.end+' '+stPill(a.status)+regionTag(a.region_label)+
     (a.reply?' <span class="muted">'+a.reply+'</span>':'')+'</span>'+
     '<button class="btn tiny" onclick="dropAvail('+a.id+')">Remove</button></div>').join('')
     : 'No hours sent to dispatch yet.';

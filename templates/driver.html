@@ -122,12 +122,9 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
     <div id="weekCal" class="weekcal"></div>
     <div class="row">
       <button class="btn small primary" id="weekSave" onclick="saveWeek()">Send this week to dispatch</button>
-      <button class="btn small" id="weekCopy" onclick="copyLast()">Copy my usual hours</button>
     </div>
     <p class="muted small">Once a week is sent in, it's locked for editing. Message dispatch or the owner for any schedule changes.</p>
-    <h2 class="mt">Your usual week</h2>
-    <p class="muted small">Your standing pattern. The calendar above is what you actually work next week.</p>
-    <div id="week" class="week"></div>
+    <h2 class="mt">Availability requests</h2>
     <div class="row" style="flex-wrap:wrap">
       <select id="avDow">
         <option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option>
@@ -910,17 +907,6 @@ let AV_LAST = null;
 function renderAvail(av, off){
   AV_LAST = [av, off];
   av = av || []; off = off || [];
-  document.getElementById('week').innerHTML = DAYS.map((d,i)=>{
-    const seen = {}, mine = [];
-    av.filter(a=>a.dow===i).forEach(a=>{
-      const k = a.start+'|'+a.end+'|'+(a.region_label||'');
-      if (seen[k]){ if (a.status==='approved') seen[k].status='approved'; return; }
-      seen[k] = a; mine.push(a);
-    });
-    return '<div class="wday"><div class="wname">'+d+'</div>'+
-      (mine.length ? mine.map(a=>'<div class="wslot '+a.status+'">'+a.start+'-'+a.end+(a.region_label?'<br><span class="small">'+rgMark(a.region_label)+'</span>':'')+'</div>').join('')
-                   : '<div class="wslot none">off</div>')+'</div>';
-  }).join('');
   document.getElementById('avail').innerHTML = av.length ? av.map(a=>
     '<div class="row between"><span>'+a.day+(a.date_label?' '+a.date_label:'')+' '+a.start+'-'+a.end+' '+stPill(a.status)+regionTag(a.region_label)+
     (a.reply?' <span class="muted">'+a.reply+'</span>':'')+'</span>'+
@@ -1018,7 +1004,6 @@ function drawWeek(){
                 ? 'Closed. ' + w.label + ' was due ' + w.due_human + '. Message dispatch to get on it.'
                 : w.label + ' is open now and closes ' + w.due_human + '.')));
   document.getElementById('weekSave').disabled = shut;
-  document.getElementById('weekCopy').disabled = shut;
   document.getElementById('weekState').innerHTML =
     w.hours + ' day' + (w.hours===1?'':'s') + ' picked' +
     (w.regions_label ? ' · Your regions: ' + rgMark(w.regions_label) : ' · No region assigned yet, ask dispatch');
@@ -1059,19 +1044,6 @@ async function saveWeek(){
   const r = await jpost('/api/driver/week', {week_start: WEEK.week_start, days: readWeek()});
   if(!r.ok){ alert(r.error || 'Could not send that week.'); return; }
   WEEK = r.week; drawWeek();
-}
-async function copyLast(){
-  const r = await jget('/api/driver/schedule');
-  if(!r.ok) return;
-  const av = (r.availability || []).filter(a=>a.status !== 'denied');
-  [0,1,2,3,4,5,6].forEach(i=>{
-    const m = av.find(a=>a.dow === i);
-    const box = document.querySelector('.wOn[data-dow="'+i+'"]');
-    box.checked = !!m;
-    if(m){ document.querySelector('.wStart[data-dow="'+i+'"]').value = m.start;
-           document.querySelector('.wEnd[data-dow="'+i+'"]').value = m.end; }
-    toggleDay(i);
-  });
 }
 loadWeek();
 try { ffNotify.button('notifBtn','notifNote'); } catch(e){}

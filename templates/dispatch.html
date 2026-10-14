@@ -1130,6 +1130,44 @@ async function findAny(){
     : '<p class="muted small">No orders match that.</p>') +
     '<button class="btn tiny" onclick="document.getElementById(\'findAnyOut\').innerHTML=\'\';document.getElementById(\'findAny\').value=\'\'">Close</button>';
 }
+// Popup: a driver's schedule is waiting to be approved.
+let SCHED_WAIT_LAST = [];
+function schedWaiting(list){
+  const items = (list || []).filter(x => x && x.driver && x.week_start);
+  SCHED_WAIT_LAST = items;
+  let box = document.getElementById('schedWait');
+  if (!items.length){ if (box) box.classList.add('hidden'); return; }
+  if (!box){
+    box = document.createElement('div');
+    box.id = 'schedWait';
+    box.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:1200;max-width:92%;box-shadow:0 6px 24px rgba(15,23,42,.25)';
+    document.body.appendChild(box);
+  }
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem('ff_sched_seen') || '[]'); } catch(e) {}
+  const keys = items.map(x => x.driver_id + '|' + x.week_start);
+  const fresh = items.some((x, i) => seen.indexOf(keys[i]) < 0);
+  if (!fresh && box.classList.contains('hidden')) return;
+  if (!fresh && box.getAttribute('data-sig') === keys.join(',')) return;
+  box.setAttribute('data-sig', keys.join(','));
+  box.innerHTML = '<div class="panel" style="border:2px solid #b45309;background:#fffbeb">'
+    + '<div class="row between"><strong>Schedule waiting to be approved</strong>'
+    + '<button class="btn tiny" onclick="schedWaitDismiss()">Dismiss</button></div>'
+    + items.map((x, i) => '<div class="small" style="margin-top:2px">' + esc(x.driver) + ' &middot; ' + x.label
+      + ' &middot; ' + x.count + ' shift' + (x.count === 1 ? '' : 's') + ' to approve</div>').join('')
+    + '<div class="row" style="margin-top:8px"><a class="btn tiny primary" href="/dispatch/schedule">Open the schedule</a></div>'
+    + '</div>';
+  box.classList.remove('hidden');
+}
+function schedWaitDismiss(){
+  const box = document.getElementById('schedWait');
+  if (box) box.classList.add('hidden');
+  try {
+    const seen = JSON.parse(localStorage.getItem('ff_sched_seen') || '[]');
+    (SCHED_WAIT_LAST || []).forEach(x => { const k = x.driver_id + '|' + x.week_start; if (seen.indexOf(k) < 0) seen.push(k); });
+    localStorage.setItem('ff_sched_seen', JSON.stringify(seen.slice(-100)));
+  } catch(e) {}
+}
 async function board(force){
   if (editing() && !force) return;
   LAST_DRAW = Date.now();
@@ -1162,6 +1200,7 @@ async function board(force){
   window.LAST_DRIVERS = res.drivers;
   chatNotify(res);
   drawAlerts(res.alerts || []);
+  try { schedWaiting(res.sched_waiting || []); } catch(e) {}
   if (document.getElementById('rests')) document.getElementById('rests').innerHTML = (res.restaurants||[]).map(r=>
     '<div class="driver"><div><strong>'+r.name+'</strong> <span class="pill '+
     (r.paused?'red':r.open?'green':'grey')+'">'+

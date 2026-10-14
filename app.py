@@ -416,6 +416,7 @@ def init_db():
     ensure_column(con, "card_vault", "paid_at", "TEXT")
     ensure_column(con, "week_submissions", "opened_at", "TEXT")
     ensure_column(con, "week_submissions", "locked_at", "TEXT")
+    ensure_column(con, "week_submissions", "reopened_at", "TEXT")
     ensure_column(con, "availability", "created_at", "TEXT")
     ensure_column(con, "availability", "decided_by", "TEXT")
     ensure_column(con, "availability", "decided_at", "TEXT")
@@ -6993,6 +6994,24 @@ def _clear_done_cache(resp):
     return resp
 
 
+def sched_waiting_rows():
+    """Driver schedules waiting to be approved: pending hours for this week or later,
+    grouped by driver and week for the dispatch board popup."""
+    cur = current_week_start().isoformat()
+    out = []
+    for row in db().execute("""SELECT driver_id, week_start, COUNT(*) n FROM availability
+                               WHERE status='pending' AND week_start >= ?
+                               GROUP BY driver_id, week_start
+                               ORDER BY week_start, driver_id""", (cur,)).fetchall():
+        drow = db().execute("SELECT name FROM drivers WHERE id=?", (row["driver_id"],)).fetchone()
+        out.append({"driver_id": row["driver_id"],
+                    "driver": (drow["name"] if drow else "Driver"),
+                    "week_start": row["week_start"],
+                    "label": range_label(dt.date.fromisoformat(row["week_start"])),
+                    "count": row["n"]})
+    return out
+
+
 @app.get("/api/dispatch/board")
 def api_board():
     _rest_push_counts = manage_rest_push_counts()
@@ -7128,6 +7147,7 @@ def api_board():
                          "hours": hours_label(r),
                          "push_count": _rest_push_counts.get(r["id"], 0)}
                         for r in rests],
+        "sched_waiting": sched_waiting_rows(),
     })
 
 @app.post("/api/dispatch/driver-status")
@@ -9881,7 +9901,8 @@ def api_dispatch_reopen():
                        (did, ws.isoformat())).fetchone()
     if not sub or not sub["submitted_at"]:
         return jsonify({"ok": False, "error": "That week was not sent in, so there is nothing to reopen."}), 400
-    db().execute("UPDATE week_submissions SET submitted_at=NULL, locked_at=NULL WHERE id=?", (sub["id"],))
+    db().execute("UPDATE week_submissions SET submitted_at=NULL, locked_at=NULL, reopened_at=? WHERE id=?",
+                 (now(), sub["id"]))
     dname = db().execute("SELECT name FROM drivers WHERE id=?", (did,)).fetchone()["name"]
     who = session.get("dispatcher_name") or "Dispatch"
     auto_msg("drv_schedule", "INSERT INTO messages(driver_id,sender,sender_name,body,created_at) VALUES(?,?,?,?,?)",
@@ -9900,7 +9921,18 @@ def api_driver_week():
         return jsonify({"ok": False}), 403
     ensure_open_week()
     ws = parse_week(request.args.get("start"))
-    weeks = [(current_week_start() + dt.timedelta(days=7 * k)).isoformat() for k in range(-4, 2)]
+    # The driver only schedules the open week. A week dispatch reopened for them
+    # stays in the list so they can still reach it and send it in again.
+    open_ws = open_week_start().isoformat()
+    weeks = [open_ws]
+    for w in [(current_week_start() + dt.timedelta(days=7 * k)).isoformat() for k in range(-4, 2)]:
+        if w == open_ws:
+            continue
+        r = db().execute("SELECT submitted_at, locked_at, reopened_at FROM week_submissions WHERE driver_id=? AND week_start=?",
+                         (did, w)).fetchone()
+        if r and not r["submitted_at"] and not r["locked_at"] and r["reopened_at"]:
+            weeks.append(w)
+    weeks.sort()
     return jsonify({"ok": True, "week": week_block(did, ws), "weeks": weeks,
                     "week_labels": {w: range_label(dt.date.fromisoformat(w)) for w in weeks},
                     "open_week": open_week_start().isoformat(),
@@ -9958,7 +9990,8 @@ def api_driver_week_save():
     db().execute("""INSERT INTO week_submissions(driver_id,week_start,submitted_at,note)
                     VALUES(?,?,?,?)
                     ON CONFLICT(driver_id,week_start)
-                    DO UPDATE SET submitted_at=excluded.submitted_at, note=excluded.note""",
+                    DO UPDATE SET submitted_at=excluded.submitted_at, note=excluded.note,
+                       reopened_at=NULL""",
                  (did, key, stamp, (data.get("note") or "").strip()))
     name = db().execute("SELECT name FROM drivers WHERE id=?", (did,)).fetchone()["name"]
     late = " (after the deadline)" if dt.datetime.now() > week_due(ws) else ""

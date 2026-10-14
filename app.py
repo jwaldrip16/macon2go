@@ -1167,19 +1167,13 @@ def dev_all_brands_mode():
 
 def home_brand_site():
     """The brand shown on a web address that belongs to no brand (like the Railway address):
-    the one picked in Settings > Regions > Brand sites, else the first brand in the list."""
+    only the one picked in Settings > Regions > Brand sites. Nothing picked, nothing shows:
+    a brand marked Not hosted there comes off, and no brand is shown there by default."""
     try:
         v = (db().execute("SELECT value FROM settings WHERE key='home_site_id'").fetchone() or [""])[0]
         s = site_by_id(v) if str(v or "").isdigit() else None
         if s is not None and site_locked(s["id"]):
-            s = None   # a locked brand is not live: show the first unlocked brand instead
-        if s is None:
-            for row in db().execute("SELECT * FROM sites ORDER BY sort, id").fetchall():
-                if not site_locked(row["id"]):
-                    s = row
-                    break
-        if s is None:
-            s = db().execute("SELECT * FROM sites ORDER BY sort, id LIMIT 1").fetchone()
+            s = None   # a locked brand is not live
         return s
     except Exception:
         return None
@@ -10744,6 +10738,10 @@ def sites_edit(b, con, who):
         con.execute("DELETE FROM settings WHERE key=?", ("rail_off_%d" % int(sid),))
         if rail == "unavailable":
             con.execute("INSERT INTO settings(key,value) VALUES(?,?)", ("rail_off_%d" % int(sid), "1"))
+        if rail == "none":
+            was = (con.execute("SELECT value FROM settings WHERE key='home_site_id'").fetchone() or [""])[0]
+            if str(was or "") == str(sid):
+                con.execute("DELETE FROM settings WHERE key='home_site_id'")   # Not hosted there: off the Railway address
         if rail == "host":
             log("site", who + " made " + name + " the brand on the Railway address")
         elif rail == "unavailable":

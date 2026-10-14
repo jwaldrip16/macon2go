@@ -177,7 +177,7 @@ function siteForm(id){
     '<label class="small" style="display:block"><input type="radio" name="stRail" value="none"'+(!s.home?' checked':'')+'> Not hosted there</label>' +
     '<label class="small" style="display:block"><input type="radio" name="stRail" value="host"'+(s.home&&!s.rail_off?' checked':'')+'> Host this brand there, open for orders</label>' +
     '<label class="small" style="display:block"><input type="radio" name="stRail" value="unavailable"'+(s.home&&s.rail_off?' checked':'')+'> Host this brand there, marked unavailable (customers are sent to its own web address)</label>' +
-    '<div class="muted small">Only one brand is hosted on the Railway address. Picking this brand replaces the one there now. Signed-in staff can still see it.</div>' +
+    '<div class="muted small">Only one brand is hosted on the Railway address. Picking this brand replaces the one there now. Not hosted there takes that brand off the Railway address; with no brand hosted, that address shows the plain business site. Signed-in staff can still see everything.</div>' +
     '<div class="row mt"><button class="btn primary small" onclick="saveSite('+id+')">Save site</button>' +
     '<button class="btn small" onclick="document.getElementById(\'stForm\').innerHTML=\'\';drawSites()">Cancel</button></div></div>';
   document.getElementById('stName').focus();

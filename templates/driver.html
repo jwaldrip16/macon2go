@@ -510,6 +510,7 @@ function renderRun(stack, total){
     (o.ref ? '<span class="pill grey">#'+o.ref+'</span> ' : '')+
     (o.token ? '<span class="pill blue">'+o.token+'</span> ' : '')+
     '<span class="pill '+(o.kitchen_status==='ready'?'green':'amber')+'">'+kitchenLabel(o)+'</span> '+
+    (o.timer_seconds!==null && o.kitchen_status==='preparing' ? ' <span class="pill amber">'+Math.max(0,Math.ceil(o.timer_seconds/60))+' min</span>' : '')+
     '<span class="pill blue">'+o.dispatch_status.replace('_',' ')+'</span>'+
     (o.drop_label ? ' <span class="pill '+(o.drop_style==='door'?'grey':'amber')+'">'+o.drop_label+'</span>' : '')+'</div>'+
     (o.restaurant ? '<div class="drvrest">'+hEsc(o.restaurant)+(o.customer ? ' <span class="muted small">&rarr; '+hEsc(o.customer)+'</span>' : '')+'</div>' : '')+

@@ -12051,7 +12051,7 @@ def dispatch_restaurants():
     for d in data:
         counts[d["rg"]] = counts.get(d["rg"], 0) + 1
     return render_template("dispatch_restaurants.html", is_owner_view=is_owner(session.get("dispatcher_id")), data=data, week=WEEK, saved=saved,
-                           regions=regs, rg_counts=counts)
+                           regions=regs, rg_counts=counts, regions_on=regions_on())
 
 @app.route("/dispatch/restaurants/delete", methods=["POST"])
 def dispatch_delete_restaurant():
@@ -13600,7 +13600,7 @@ def manage_driver_rows():
                 "active_orders": db().execute("""SELECT COUNT(*) c FROM orders WHERE driver_id=?
                                    AND dispatch_status IN ('assigned','received','at_restaurant','enroute')""",
                                               (d["id"],)).fetchone()["c"],
-                "regions_label": region_names(driver_region_ids(d["id"])) if driver_region_ids(d["id"]) else "No region",
+                "regions_label": (region_names(driver_region_ids(d["id"])) if driver_region_ids(d["id"]) else "No region") if regions_on() else "",
                 "locked": not driver_unlocked(d["id"]),
                 "unlock_block": driver_unlock_block(d["id"]) or "",
                 "push_count": db().execute("SELECT COUNT(*) c FROM push_subscriptions WHERE role='driver' AND who=?",
@@ -14012,7 +14012,7 @@ def dispatch_manage():
                 "branch_accounts": [{"id": a["id"], "name": a["name"]} for a in _br_rows()]}
     except Exception:
         init = None
-    return render_template("dispatch_manage.html", init_drivers=init)
+    return render_template("dispatch_manage.html", init_drivers=init, regions_on=regions_on())
 
 
 # ---------------- photos ----------------

@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<div class="head"><h1>Restaurant settings</h1><div><a class="btn small" href="/dispatch/regions">Regions</a>
+<div class="head"><h1>Restaurant settings</h1><div>{% if regions_on %}<a class="btn small" href="/dispatch/regions">Regions</a>{% endif %}
   {% if is_owner_view %}<a class="btn small" href="/dispatch/import-zuppler">Import from another site</a>{% endif %}
   <a class="btn small" href="/dispatch">Back to board</a></div></div>
 {% if saved %}<p class="good">Hours saved.</p>{% endif %}
@@ -26,7 +26,7 @@
     <div><input name="lng" placeholder="Longitude (optional)"></div></div>
   <button class="btn primary">Add restaurant</button>
 </form>
-<div class="panel" id="rgFilter">
+{% if regions_on %}<div class="panel" id="rgFilter">
   <h2 style="margin-top:0">Show regions</h2>
   <p class="muted small" style="margin-top:0">Restaurants are grouped by region. Tick one region or several to see just those. Your pick stays the next time you open this page.</p>
   <div class="row" style="flex-wrap:wrap;gap:6px 16px;align-items:center">
@@ -39,6 +39,7 @@
     <span class="muted small" id="rgShown"></span>
   </div>
 </div>
+{% endif %}
 {% set appl = data|selectattr('method','equalto','app')|list %}
 {% set onl = data|selectattr('method','equalto','online')|list %}
 {% set phl = data|selectattr('method','equalto','phone')|list %}
@@ -50,7 +51,7 @@
   <div class="howcols">
     {% for title, lst in [('Restaurant app', appl), ('Called in by dispatch: online', onl), ('Called in by dispatch: telephone', phl)] %}
     <div><h3>{{ title }} ({{ lst|length }})</h3>
-      {% if lst %}<ul class="howlist">{% for d in lst %}<li class="rgItem" data-rg="{{ d.rg }}"><a href="#rest{{ d.r['id'] }}">{{ d.r['name'] }}</a> <span class="muted small">{{ d.rg_name }}</span></li>{% endfor %}</ul>
+      {% if lst %}<ul class="howlist">{% for d in lst %}<li class="rgItem" data-rg="{{ d.rg }}"><a href="#rest{{ d.r['id'] }}">{{ d.r['name'] }}</a>{% if regions_on %} <span class="muted small">{{ d.rg_name }}</span>{% endif %}</li>{% endfor %}</ul>
       {% else %}<p class="muted small">None yet.</p>{% endif %}</div>
     {% endfor %}
   </div>
@@ -59,7 +60,7 @@
 <div id="bizNone" class="muted small" style="display:none">No business name or address matches that.</div>
 <style>.srchHide{display:none!important}</style>
 {% for d in data %}
-{% if loop.first or loop.previtem.rg != d.rg %}<h2 class="rgItem rgHead" data-rg="{{ d.rg }}" style="margin:22px 0 8px">{{ d.rg_name }} <span class="muted small">({{ rg_counts.get(d.rg, 0) }} restaurant{{ '' if rg_counts.get(d.rg, 0) == 1 else 's' }})</span></h2>{% endif %}
+{% if regions_on %}{% if loop.first or loop.previtem.rg != d.rg %}<h2 class="rgItem rgHead" data-rg="{{ d.rg }}" style="margin:22px 0 8px">{{ d.rg_name }} <span class="muted small">({{ rg_counts.get(d.rg, 0) }} restaurant{{ '' if rg_counts.get(d.rg, 0) == 1 else 's' }})</span></h2>{% endif %}{% endif %}
 <div class="rgItem bizItem" data-rg="{{ d.rg }}" data-name="{{ d.r['name'] }} {{ d.r['address'] or '' }}">
 <form class="panel" method="post" id="rest{{ d.r['id'] }}">
   <input type="hidden" name="restaurant_id" value="{{ d.r['id'] }}">
@@ -90,10 +91,10 @@
     </select></div>
   <div class="row"><label>Online ordering link (for online)</label>
     <input name="order_url" value="{{ d.r['order_url'] or '' }}" placeholder="https://..."></div>
-  <div class="row"><label>Region</label>
+  {% if regions_on %}<div class="row"><label>Region</label>
     <select name="region_id"><option value="0">No region</option>
       {% for g in regions %}<option value="{{ g.id }}" {{ 'selected' if (d.r['region_id'] or 0) == g.id }}>{{ g.name }}</option>{% endfor %}
-    </select>{% if not regions %}<span class="muted small">Add regions with the Regions button above.</span>{% endif %}</div>
+    </select></div>{% endif %}
   <div class="row"><label>Default prep minutes</label>
     <input type="number" name="prep_default" value="{{ d.r['prep_default'] }}" min="1" max="120"></div>
   <div class="row"><label>Phone</label><input name="phone" value="{{ d.r['phone'] }}">
@@ -149,8 +150,8 @@ async function restPhoto(id, inp){
   if (!res.ok){ document.getElementById('rp'+id).textContent = res.error || 'Upload failed.'; return; }
   location.reload();
 }
-// ---- show one region or several (blank pick = every region). Saved on this device.
-const RG_KEY = 'ffRestRegions';
+{% if regions_on %}// ---- show one region or several (blank pick = every region). Saved on this device.
+const RG_KEY = 'ffRestRegions';{% endif %}
 function bizNorm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9 ]+/g,'').replace(/\s+/g,' ').trim(); }
 function bizSearch(){
   const q = bizNorm(document.getElementById('bizSearch').value), words = q.split(' ').filter(Boolean);
@@ -164,7 +165,7 @@ function bizSearch(){
   document.querySelectorAll('.rgHead').forEach(hd=>hd.classList.toggle('srchHide', !!q && !seen[hd.dataset.rg]));
   document.getElementById('bizNone').style.display = (q && !any) ? '' : 'none';
 }
-function rgPicked(){ return Array.from(document.querySelectorAll('.rgPick:checked')).map(b=>b.value); }
+{% if regions_on %}function rgPicked(){ return Array.from(document.querySelectorAll('.rgPick:checked')).map(b=>b.value); }
 function rgApply(save){
   const pick = rgPicked();
   if (save){ try { localStorage.setItem(RG_KEY, JSON.stringify(pick)); } catch(e){} }
@@ -195,6 +196,7 @@ function rgAll(on){
     if (f && f.parentElement.style.display === 'none'){ rgAll(true); f.scrollIntoView(); }
   }
 })();
+{% endif %}
 </script><script>
 async function restGoogle(id, btn){
   if (!confirm('Replace this restaurant\'s phone and address with what Google has?')) return;

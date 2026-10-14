@@ -138,6 +138,26 @@ rsLoad();
   <label><input type="checkbox" name="regions_on" value="1" {% if regions_on %}checked{% endif %}> Use regions (more than one area)</label>
   <label><input type="checkbox" name="dispatch_region_lock" value="1" {% if region_lock %}checked{% endif %}> Only dispatchers assigned to a region can create orders there (owners can always create)</label>
   <div class="muted small">Turn this off if the business covers one area. Customers won't see the "Where are you?" buttons, and menu imports skip the region choice. Your regions and their settings are kept.</div>
+  {% if brands_on %}
+  <div style="margin-top:10px">
+    <h3 style="margin:6px 0 4px">Brand sites</h3>
+    <p class="muted small">One site per brand: its business name, phone and its own web address, and whether the Railway address shows it. Add, edit or delete a site here. The look of each brand is edited on the <a href="/dispatch/regions">Regions page</a> under Brand sites.</p>
+    {% for st in sites %}
+    <div class="row" style="align-items:center;margin:4px 0">
+      <strong>{{ st.name }}</strong>
+      <span class="muted small">{{ st.domains or 'no web address yet' }}{% if st.home %} &middot; on the Railway address{% if st.rail_off %}, marked unavailable{% else %}, open for orders{% endif %}{% endif %}</span>
+      <span style="margin-left:auto;white-space:nowrap">
+        <button type="button" class="btn tiny" onclick="bsForm({{ st.id }})">Edit</button>
+        <button type="button" class="btn tiny danger" data-id="{{ st.id }}" data-name="{{ st.name }}" onclick="bsDel(this)">Delete</button>
+      </span>
+    </div>
+    {% else %}
+    <p class="muted small">No brand sites yet. Add one for each brand.</p>
+    {% endfor %}
+    <button type="button" class="btn small" onclick="bsForm(0)">Add site</button>
+    <div id="bsBox" class="mt"></div>
+  </div>
+  {% endif %}
   {% endif %}
   <h2>Customer website</h2>
   {% if is_owner_view is not defined or is_owner_view %}<p><a class="btn small" href="/dispatch/import-website">Copy a whole website</a> <span class="muted small">Bring in the name, logo, photos, text, contact info and FAQs from a site you own.</span></p>{% endif %}
@@ -490,6 +510,40 @@ rsLoad();
 </div>
 {% endblock %}
 {% block scripts %}<script>attachAddressPicker('bizAddr');
+{% if owner_view and brands_on %}const BSITES = {{ sites|tojson }};
+function bsE(v){ return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function bsForm(id){
+  const s = BSITES.find(x=>x.id===id) || {};
+  const rail = id ? (s.home ? (s.rail_off ? 'unavailable' : 'host') : 'none') : 'none';
+  document.getElementById('bsBox').innerHTML =
+    '<div class="row mt" style="flex-wrap:wrap"><input id="bsName" maxlength="60" placeholder="Business name, like Tiger Town To Go" value="'+bsE(s.name)+'" style="min-width:240px;max-width:340px">' +
+    '<input id="bsPhone" maxlength="20" placeholder="Phone, like (334) 555-0100" value="'+bsE(s.phone)+'" style="max-width:190px"></div>' +
+    '<input id="bsDomains" placeholder="Web address, like tigertowntogo.com" value="'+bsE(s.domains)+'" style="min-width:280px;max-width:440px" class="mt">' +
+    '<div class="muted small">Add more than one web address with commas. www. is covered automatically. In Railway, open the service, Settings, Networking, Custom Domain, add the same address, then add the CNAME record Railway shows at your domain company (Cloudflare: DNS only, grey cloud).</div>' +
+    '<div class="small mt"><strong>On the Railway address</strong> (and any address not set up for a brand)</div>' +
+    '<label class="small" style="display:block"><input type="radio" name="bsRail" value="none"'+(rail==='none'?' checked':'')+'> Not hosted there</label>' +
+    '<label class="small" style="display:block"><input type="radio" name="bsRail" value="host"'+(rail==='host'?' checked':'')+'> Host this brand there, open for orders</label>' +
+    '<label class="small" style="display:block"><input type="radio" name="bsRail" value="unavailable"'+(rail==='unavailable'?' checked':'')+'> Host this brand there, marked unavailable (customers are sent to its own web address)</label>' +
+    '<div class="muted small">Only one brand is hosted on the Railway address. Picking this brand replaces the one there now. Not hosted there takes that brand off the Railway address; with no brand hosted, that address shows the plain business site. Signed-in staff can still see everything.</div>' +
+    '<div class="row mt"><button type="button" class="btn primary small" onclick="bsSave('+id+')">Save site</button>' +
+    '<button type="button" class="btn small" onclick="document.getElementById(\'bsBox\').innerHTML=\'\'">Cancel</button></div>';
+}
+async function bsSave(id){
+  const b = {op: id ? 'edit_site' : 'add_site', id: id, name: document.getElementById('bsName').value,
+             phone: document.getElementById('bsPhone').value, domains: document.getElementById('bsDomains').value,
+             rail: (document.querySelector('input[name=bsRail]:checked')||{}).value || 'none'};
+  const r = await jpost('/api/dispatch/regions', b);
+  if(!r.ok){ alert(r.error || 'That did not save.'); return; }
+  location.reload();
+}
+{% endif %}
+{% if owner_view and brands_on %}async function bsDel(btn){
+  if(!confirm('Delete ' + btn.dataset.name + '? Its regions go back to No site. Orders and restaurants are not touched.')) return;
+  const r = await jpost('/api/dispatch/regions', {op:'delete_site', id: parseInt(btn.dataset.id,10)});
+  if(!r.ok){ alert(r.error || 'Delete failed.'); return; }
+  location.reload();
+}
+{% endif %}
 let PURGE = null;
 async function purgePreview(){
   const d = parseInt(document.getElementById('purgeDays').value||'0',10);

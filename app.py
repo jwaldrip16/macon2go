@@ -1179,6 +1179,19 @@ def home_brand_site():
         return None
 
 
+def sites_view():
+    """Brand sites for the Settings page: each site's name, phone, web addresses and
+    whether it is the one hosted on the Railway address (open or marked unavailable)."""
+    try:
+        hb = home_brand_site()
+        hid = hb["id"] if hb is not None else 0
+        return [dict(id=x["id"], name=x["name"], phone=x["phone"] or "", domains=x["domains"] or "",
+                     home=x["id"] == hid, rail_off=rail_off(x["id"]))
+                for x in db().execute("SELECT * FROM sites ORDER BY sort, id").fetchall()]
+    except Exception:
+        return []
+
+
 class order_site:
     """with order_site(region_id): texts and pages use that region's brand name and number."""
     def __init__(self, rid):
@@ -12600,7 +12613,7 @@ def dispatch_settings():
         if errs:
             db().commit()
             rows = db().execute("SELECT * FROM settings").fetchall()
-            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
+            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
                                    saved=False, errors=errs, bh=business_hours_rows(),
                                    bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
         if "order_tokens" in request.form:
@@ -12609,7 +12622,7 @@ def dispatch_settings():
         db().commit()
         saved = True
     rows = db().execute("SELECT * FROM settings").fetchall()
-    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
+    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
                            bh=business_hours_rows(), bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
 
 # ---------------------------------------------------------------- chat

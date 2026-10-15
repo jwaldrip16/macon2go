@@ -384,7 +384,7 @@ function gateCheck(res, d){
   show('paneSched', true);
   if (GATED !== mode){ refreshSchedule(); if (closed){ DTAB = 'sched'; } else { DTAB = 'chat'; chat(); } }
   GATED = mode;
-  try { MY_STATUS = d.status; } catch(e){}
+  try { MY_STATUS = d.status; gateLocation(d.status, null); } catch(e){}
   return true;
 }
 function renderDone(list){
@@ -420,6 +420,7 @@ async function state(){
   try { newOrderAlert(res.stack); } catch(e) { console.log('alert skipped', e); }
 }
 function renderNoonlight(nl){
+  NL_LAST = nl || null;
   const el = document.getElementById('nlNote');
   if (!el) return;
   if (nl && nl.alarm_id){
@@ -443,6 +444,7 @@ function nlStandDown(){
 }
 function renderStatus(d){
   MY_STATUS = d.status;
+  gateLocation(d.status, NL_LAST);
   document.getElementById('status').innerHTML =
     '<div class="row"><div>Status <span class="pill '+
     (d.status==='online'?'green':d.status==='break'?'amber':'grey')+'">'+d.status+'</span>'+
@@ -893,22 +895,41 @@ function locFail(err){
   el.textContent = 'Dispatch cannot see you on the map. ' + why +
     (err && err.code != null ? ' (code ' + err.code + ')' : '');
 }
-function startLocation(){
-  if(!navigator.geolocation){ locFail(null); return; }
-  let WATCH = null;
-  const got = function(p){ LAST_FIX = p.coords; sendFix(true);
-    if(!WATCH){ WATCH = navigator.geolocation.watchPosition(pushFix, function(){}, {enableHighAccuracy:true, maximumAge:0, timeout:30000}); } };
-  // GPS first (drivers want precision outdoors); if the phone cannot get a GPS fix,
-  // fall back to network location so drivers inside a restaurant still report.
+let LOC_ON = false, WATCH = null, NL_LAST = null;
+function setLocNote(text){ const el = document.getElementById('locNote'); if(el) el.textContent = text; }
+function got(p){
+  if(!LOC_ON) return;
+  LAST_FIX = p.coords; sendFix(true);
+  if(!WATCH){ WATCH = navigator.geolocation.watchPosition(pushFix, function(){}, {enableHighAccuracy:true, maximumAge:0, timeout:30000}); }
+}
+// GPS first (drivers want precision outdoors); if the phone cannot get a GPS fix,
+// fall back to network location so drivers inside a restaurant still report.
+function trackOnce(){
   navigator.geolocation.getCurrentPosition(got, function(){
     navigator.geolocation.getCurrentPosition(got, locFail, {enableHighAccuracy:false, timeout:20000, maximumAge:60000});
   }, {enableHighAccuracy:true, timeout:15000});
-  setInterval(function(){ sendFix(false); }, 3000);
-  setInterval(keepAwake, 5000);
-  document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible'){ WAKE = null; keepAwake(); sendFix(true); appBack(); }
-    else appLeft();
-  });
+}
+function startLocation(){
+  if(!navigator.geolocation){ locFail(null); return; }
+  if(LOC_ON) return;
+  LOC_ON = true;
+  setLocNote('Checking your location...');
+  trackOnce();
+}
+// Off shift means no tracking at all: the phone stops watching its position,
+// and being on the schedule does not change that. Only on shift (online) or
+// on break, or a live Noonlight alarm, keeps tracking on.
+function stopLocation(){
+  if(!LOC_ON) return;
+  LOC_ON = false;
+  try { if(WATCH) navigator.geolocation.clearWatch(WATCH); } catch(e){}
+  WATCH = null; LAST_FIX = null;
+  setLocNote('You are off shift, so dispatch is not tracking your location.');
+}
+function gateLocation(st, nl){
+  const alarmLive = !!(nl && nl.alarm_id && (nl.status === 'psap' || nl.status === 'active'));
+  if(st === 'online' || st === 'break' || alarmLive) startLocation();
+  else stopLocation();
 }
 // Drivers stay in this app while on a run. Leaving it (for Google Maps, Apple Maps or
 // anything else) tells dispatch, and the driver is reminded when they come back.
@@ -930,7 +951,13 @@ let WAKE = null;
 // The Keep screen awake switch decides this now (on by default; each phone can turn it off).
 function keepAwake(){ try { ffAwake.check(); } catch(e){} }
 ffAwake.init('driver', {{ 'true' if awake_default != '0' else 'false' }});
-state(); chat(); startLocation();
+state(); chat();
+setInterval(function(){ sendFix(false); }, 3000);
+setInterval(keepAwake, 5000);
+document.addEventListener('visibilitychange', function(){
+  if (document.visibilityState === 'visible'){ WAKE = null; keepAwake(); sendFix(true); appBack(); }
+  else appLeft();
+});
 setInterval(state,4000); setInterval(chat,4000);
 
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];

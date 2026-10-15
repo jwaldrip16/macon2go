@@ -429,8 +429,12 @@ function renderNoonlight(nl){
   NL_LAST = nl || null;
   const el = document.getElementById('nlNote');
   if (!el) return;
-  if (nl && nl.alarm_id){
+  if ((nl && nl.alarm_id) || NL_MSG){
     el.style.display = '';
+    if (!(nl && nl.alarm_id)){
+      el.innerHTML = '<span class="small" style="color:#b3261e">' + esc(NL_MSG) + '</span>';
+      return;
+    }
     const tail = nl.status === 'psap' ? 'Emergency dispatch has been contacted.' :
       'Noonlight will text and call you; keep your phone with you.';
     el.innerHTML = 'Noonlight alarm active since ' + nl.at + '. ' + tail +
@@ -445,7 +449,7 @@ function nlStandDown(){
   const pin = box ? (box.value || '').trim() : '';
   if (!pin){ nlBarMsg('Type your driver PIN in the box, then tap Stand down.'); return; }
   jpost('/api/driver/noonlight/cancel', {pin: pin}).then(function(r){
-    if (r && r.ok) nlBarMsg('Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : ''));
+    if (r && r.ok){ if (box) box.value = ''; nlBarMsg('Correct PIN. Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : '')); }
     else nlBarMsg((r && r.error) || 'Could not stand down the alarm. Try again.');
   }).catch(function(){ nlBarMsg('Could not stand down the alarm. Try again.'); });
 }

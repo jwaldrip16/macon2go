@@ -424,6 +424,7 @@ let NL_MSG = '';
 let NL_PIN = '';
 const PAGE_VER = '{{ page_ver }}';
 let NL_BUSY = false;
+function nlEsc(t){ return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function nlBarMsg(t){   // message shown inside the alarm bar; survives the 4s re-render for 8s
   NL_MSG = t || '';
   try { renderNoonlight(NL_LAST); } catch(e){}
@@ -458,7 +459,7 @@ function renderNoonlight(nl){
   if ((nl && nl.alarm_id) || NL_MSG){
     el.style.display = '';
     if (!(nl && nl.alarm_id)){
-      el.innerHTML = '<span class="small" style="color:#b3261e">' + esc(NL_MSG) + '</span>';
+      el.innerHTML = '<span class="small" style="color:#b3261e">' + nlEsc(NL_MSG) + '</span>';
       return;
     }
     const tail = nl.status === 'psap' ? 'Emergency dispatch has been contacted.' :
@@ -467,7 +468,7 @@ function renderNoonlight(nl){
       '<div id="nlDots" style="font-size:18px;letter-spacing:4px;margin:4px 0">' + nlDotsHtml() + '</div>' +
       '<div style="margin:4px 0">' + nlPadHtml() + '</div>' +
       ' <button type="button" class="btn tiny"' + (NL_BUSY ? ' disabled' : '') + ' onclick="nlStandDown()">Stand down</button>' +
-      (NL_MSG ? '<br><span class="small" style="color:#b3261e">' + esc(NL_MSG) + '</span>' : '');
+      (NL_MSG ? '<br><span class="small" style="color:#b3261e">' + nlEsc(NL_MSG) + '</span>' : '');
   } else { el.style.display = 'none'; el.innerHTML = ''; }
 }
 function nlStandDown(){

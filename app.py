@@ -2176,7 +2176,7 @@ def dev_guard():
 # signed-in developer keeps full access. Nothing is deleted. Any value other than 2
 # (including a missing variable) keeps the site running.
 # Optional SUSPEND_MESSAGE replaces the wording on the paused page.
-SUSPEND_OPEN_PREFIXES = ("/static/", "/brand/", "/media/", "/uploads/", "/.well-known/", "/manifest/", "/privacy", "/delete-account")
+SUSPEND_OPEN_PREFIXES = ("/static/", "/brand/", "/media/", "/uploads/", "/.well-known/", "/manifest/", "/privacy", "/delete-account", "/api/noonlight/")
 SUSPEND_OPEN_PATHS = {"/dispatch/login", "/dispatch/logout", "/favicon.ico", "/robots.txt", "/sw.js"}
 
 
@@ -18261,7 +18261,7 @@ def api_noonlight_webhook():
         ok = _sig_ok(raw, sig)
         if not ok:
             try:
-                ok = _sig_ok(json.dumps(json.loads(raw), separators=(",", ":")).encode("utf-8"), sig)
+                ok = _sig_ok(json.dumps(json.loads(raw), separators=(",", ":"), ensure_ascii=False).encode("utf-8"), sig)
             except Exception:
                 ok = False
         if not ok:

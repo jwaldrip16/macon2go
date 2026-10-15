@@ -420,10 +420,33 @@ async function state(){
   try { newOrderAlert(res.stack); } catch(e) { console.log('alert skipped', e); }
 }
 let NL_MSG = '';
+let NL_PIN = '';
 function nlBarMsg(t){   // message shown inside the alarm bar; survives the 4s re-render for 8s
   NL_MSG = t || '';
   try { renderNoonlight(NL_LAST); } catch(e){}
   if (t) setTimeout(function(){ if (NL_MSG === t){ NL_MSG = ''; try { renderNoonlight(NL_LAST); } catch(e){} } }, 8000);
+}
+function nlDotsHtml(){
+  return NL_PIN ? Array(NL_PIN.length + 1).join('• ') : '<span class="muted small">Type your PIN</span>';
+}
+function nlPadHtml(){
+  function b(k, label){
+    return '<button type="button" class="btn tiny" style="width:56px;height:46px;font-size:18px;margin:3px" onclick="nlPadKey(\'' + k + '\')">' + label + '</button>';
+  }
+  return '<div>' + b('1',1) + b('2',2) + b('3',3) + '</div>' +
+         '<div>' + b('4',4) + b('5',5) + b('6',6) + '</div>' +
+         '<div>' + b('7',7) + b('8',8) + b('9',9) + '</div>' +
+         '<div>' + b('C','C') + b('0',0) + b('<','←') + '</div>';
+}
+function nlPadKey(k){
+  if (k === 'C') NL_PIN = '';
+  else if (k === '<') NL_PIN = NL_PIN.slice(0, -1);
+  else if (NL_PIN.length < 8) NL_PIN += k;
+  nlPadPaint();
+}
+function nlPadPaint(){
+  const el = document.getElementById('nlDots');
+  if (el) el.innerHTML = nlDotsHtml();
 }
 function renderNoonlight(nl){
   NL_LAST = nl || null;
@@ -438,18 +461,17 @@ function renderNoonlight(nl){
     const tail = nl.status === 'psap' ? 'Emergency dispatch has been contacted.' :
       'Noonlight will text and call you; keep your phone with you.';
     el.innerHTML = 'Noonlight alarm active since ' + nl.at + '. ' + tail +
-      ' <input id="nlPin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" ' +
-      'style="width:80px;max-width:30%;padding:4px 6px" onkeydown="if(event.key===\'Enter\')nlStandDown()">' +
+      '<div id="nlDots" style="font-size:18px;letter-spacing:4px;margin:4px 0">' + nlDotsHtml() + '</div>' +
+      '<div style="margin:4px 0">' + nlPadHtml() + '</div>' +
       ' <button type="button" class="btn tiny" onclick="nlStandDown()">Stand down</button>' +
       (NL_MSG ? '<br><span class="small" style="color:#b3261e">' + esc(NL_MSG) + '</span>' : '');
   } else { el.style.display = 'none'; el.innerHTML = ''; }
 }
 function nlStandDown(){
-  const box = document.getElementById('nlPin');
-  const pin = box ? (box.value || '').trim() : '';
-  if (!pin){ nlBarMsg('Type your driver PIN in the box, then tap Stand down.'); return; }
+  const pin = (NL_PIN || '').trim();
+  if (!pin){ nlBarMsg('Type your PIN, then tap Stand down.'); return; }
   jpost('/api/driver/noonlight/cancel', {pin: pin}).then(function(r){
-    if (r && r.ok){ if (box) box.value = ''; nlBarMsg('Correct PIN. Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : '')); }
+    if (r && r.ok){ NL_PIN = ''; nlPadPaint(); nlBarMsg('Correct PIN. Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : '')); }
     else nlBarMsg((r && r.error) || 'Could not stand down the alarm. Try again.');
   }).catch(function(){ nlBarMsg('Could not stand down the alarm. Try again.'); });
 }

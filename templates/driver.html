@@ -920,7 +920,9 @@ function startLocation(){
 // and being on the schedule does not change that. Only on shift (online) or
 // on break, or a live Noonlight alarm, keeps tracking on.
 function stopLocation(){
-  if(!LOC_ON) return;
+  // Runs on every state poll, not just on the on-shift to off-shift flip, so a driver
+  // who opens the app already off shift still sees the right line instead of a stuck
+  // "Checking your location...".
   LOC_ON = false;
   try { if(WATCH) navigator.geolocation.clearWatch(WATCH); } catch(e){}
   WATCH = null; LAST_FIX = null;

@@ -2241,7 +2241,8 @@ def rail_off(sid):
         return False
 
 
-RAIL_OPEN_PREFIXES = SUSPEND_OPEN_PREFIXES + _STAFF_PREFIXES
+RAIL_OPEN_PREFIXES = (SUSPEND_OPEN_PREFIXES + _STAFF_PREFIXES +
+                  ("/api/chat/", "/api/push/", "/api/order/", "/api/regions"))
 
 
 def rail_guard():
@@ -12705,7 +12706,11 @@ def dispatch_settings():
 
 @app.get("/api/chat/<int:driver_id>")
 def api_chat(driver_id):
-    if session.get("driver_id") != driver_id:
+    is_me = session.get("driver_id") == driver_id
+    is_disp = bool(session.get("dispatcher_id"))
+    if not is_me and not is_disp:
+        return jsonify({"ok": False, "error": "Sign in to read this chat."}), 403
+    if not is_me:
         bad = out_of_scope(driver_id)
         if bad:
             return bad
@@ -12727,19 +12732,24 @@ def api_chat(driver_id):
 @app.post("/api/chat/<int:driver_id>")
 def api_chat_send(driver_id):
     data = request.get_json(force=True)
-    sender = data.get("sender", "dispatch")
     body = (data.get("body") or "").strip()
     if not body:
         return jsonify({"ok": False}), 400
+    is_me = session.get("driver_id") == driver_id
+    is_disp = bool(session.get("dispatcher_id"))
+    if not is_me and not is_disp:
+        return jsonify({"ok": False, "error": "Sign in to send this message."}), 403
+    sender = "driver" if (is_me and not is_disp) else data.get("sender", "dispatch")
     if sender == "dispatch":
         bad = out_of_scope(driver_id)
         if bad:
             return bad
     who = session.get("dispatcher_name") if sender == "dispatch" else None
+    disp_id = session.get("dispatcher_id") if sender == "dispatch" else None
     db().execute("""INSERT INTO messages(driver_id,sender,sender_name,dispatcher_id,body,created_at,
                                         seen_by_dispatch)
                     VALUES(?,?,?,?,?,?,?)""",
-                 (driver_id, sender, who, session.get("dispatcher_id") if sender == "dispatch" else None,
+                 (driver_id, sender, who, disp_id,
                   body, now(), 0 if sender == "driver" else 1))
     db().commit()
     if sender == "dispatch":

@@ -150,6 +150,20 @@ CREATE TABLE IF NOT EXISTS time_off (
   reply TEXT,
   created_at TEXT);
 
+CREATE TABLE IF NOT EXISTS noonlight_alarms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  driver_id INTEGER,
+  order_id INTEGER,
+  alarm_id TEXT,
+  status TEXT,
+  reason TEXT,
+  lat REAL,
+  lng REAL,
+  note TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  closed_at TEXT);
+
 CREATE TABLE IF NOT EXISTS week_submissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   driver_id INTEGER NOT NULL,
@@ -7116,6 +7130,7 @@ def api_board():
         "completed": [done_order_dict(o) for o in done],
         "owner": is_owner(),
         "done_day": done_day,
+        "noonlight": board_noonlight(),
         "chat_unread": sum(unread.values()),
         "chat_latest": ({"id": newest["id"], "driver_id": newest["driver_id"],
                          "driver": newest["name"], "body": newest["body"],
@@ -9383,6 +9398,18 @@ def api_driver_ping():
                  (lat, lng, now(), did))
     db().commit()
     addr = update_driver_addr(did, lat, lng)
+    # while a Noonlight alarm is active, forward the driver's live location to Noonlight
+    try:
+        _nl = db().execute("""SELECT alarm_id FROM noonlight_alarms WHERE driver_id=? AND alarm_id IS NOT NULL
+                                             AND status IN ('active','psap') ORDER BY id DESC LIMIT 1""",
+                           (did,)).fetchone()
+        if _nl:
+            _t = time.time()
+            if _t - _NL_LAST_LOC.get(_nl["alarm_id"], 0) >= 10:
+                _NL_LAST_LOC[_nl["alarm_id"]] = _t
+                noonlight_update_location(_nl["alarm_id"], lat, lng, data.get("acc"))
+    except Exception:
+        pass
     log_gps_fix(did, lat, lng, addr)
     # while the driver's call is open on the board, the phone checks in every 8 seconds
     return jsonify({"ok": True, "tracking": True, "address": addr, "fast": driver_has_open_call(did)})
@@ -13215,6 +13242,7 @@ def api_driver_state():
                     "dispatch_tel": tel_digits(dispatch_phone(driver_phone_region(did))),
                     "dispatch_phone": nice_phone(dispatch_phone(driver_phone_region(did))),
                     "late": [x for x in late_accepts() if x["kind"] == "driver" and x["driver_id"] == did],
+  "noonlight": driver_noonlight_state(did),
                     "business_name": (setting("business_name", str) or "Fleet Foot Delivery"),
                     "scheduled": scheduled,
                     "done": [order_dict(o) for o in done],
@@ -17032,6 +17060,158 @@ def tel_digits(p):
         d = d[1:]
     return ("+1" + d) if len(d) == 10 else d
 
+_NL_LAST_LOC = {}
+
+
+def noonlight_base():
+    return (os.environ.get("NOONLIGHT_API_URL") or "https://api-sandbox.noonlight.com").strip().rstrip("/")
+
+
+def noonlight_token():
+    return (os.environ.get("NOONLIGHT_TOKEN") or "").strip()
+
+
+def noonlight_phone(p):
+    digits = re.sub(r"\D", "", p or "")
+    if len(digits) == 10:
+        digits = "1" + digits
+    return digits
+
+
+def noonlight_acc(acc):
+    try:
+        return int(max(1, round(float(acc)) if acc is not None else 65))
+    except (TypeError, ValueError):
+        return 65
+
+
+def noonlight_addr_obj(s):
+    """'2302 Waverly Pkwy, Opelika, AL 36801' -> Noonlight address object, or None."""
+    parts = [p.strip() for p in str(s or "").split(",") if p.strip()]
+    if len(parts) < 3:
+        return None
+    stz = parts[-1].split()
+    if len(stz) != 2:
+        return None
+    obj = {"line1": parts[0], "city": parts[-2], "state": stz[0].upper(), "zip": stz[1]}
+    if len(parts) >= 4:
+        obj["line2"] = " ".join(parts[1:-2])
+    return obj
+
+
+def noonlight_create_alarm(name, phone, lat=None, lng=None, acc=None, addr=None, pin=None,
+                           owner_id=None, instructions=None):
+    """Create a Noonlight Dispatch alarm. Returns (ok, alarm_id, error_text)."""
+    token = noonlight_token()
+    if not token:
+        return False, None, "Noonlight is not set up yet (no server token)."
+    if lat is not None and lng is not None:
+        location = {"coordinates": {"lat": round(float(lat), 6), "lng": round(float(lng), 6),
+                                    "accuracy": noonlight_acc(acc)}}
+    else:
+        a = noonlight_addr_obj(addr)
+        location = {"address": a} if a else None
+    if location is None:
+        return False, None, "No location for the alarm."
+    body = {"name": (name or "Driver")[:80], "phone": noonlight_phone(phone), "location": location}
+    if pin:
+        body["pin"] = str(pin)[:20]
+    if owner_id:
+        body["owner_id"] = str(owner_id)[:80]
+    if instructions:
+        body["instructions"] = {"entry": str(instructions)[:600]}
+    req = urllib.request.Request(noonlight_base() + "/dispatch/v1/alarms",
+                                 data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            j = json.loads(resp.read().decode("utf-8") or "{}")
+            return True, (j.get("id") or None), None
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8")[:200]
+        except Exception:
+            detail = ""
+        return False, None, "Noonlight rejected the alarm (HTTP %s) %s" % (e.code, detail)
+    except Exception as e:
+        return False, None, "Could not reach Noonlight (%s)." % e
+
+
+def noonlight_update_location(alarm_id, lat, lng, acc=None):
+    token = noonlight_token()
+    if not token or not alarm_id or lat is None or lng is None:
+        return False
+    body = {"coordinates": {"lat": round(float(lat), 6), "lng": round(float(lng), 6),
+                            "accuracy": noonlight_acc(acc)}}
+    req = urllib.request.Request(noonlight_base() + "/dispatch/v1/alarms/" + str(alarm_id) + "/locations",
+                                 data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return True
+    except Exception:
+        return False
+
+
+def noonlight_cancel_alarm(alarm_id, pin):
+    token = noonlight_token()
+    if not token:
+        return False, "Noonlight is not set up yet."
+    body = {"status": "CANCELED", "pin": str(pin)}
+    req = urllib.request.Request(noonlight_base() + "/dispatch/v1/alarms/" + str(alarm_id) + "/status",
+                                 data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        return True, None
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8")[:200]
+        except Exception:
+            detail = ""
+        return False, "Noonlight refused (%s) %s" % (e.code, detail)
+    except Exception as e:
+        return False, "Could not reach Noonlight (%s)." % e
+
+
+def board_noonlight():
+    """Open Noonlight alarms for the dispatch board."""
+    rows = db().execute("""SELECT * FROM noonlight_alarms
+                           WHERE status NOT IN ('closed','canceled') ORDER BY id DESC LIMIT 10""").fetchall()
+    out = []
+    for r in rows:
+        d = db().execute("SELECT name, phone FROM drivers WHERE id=?", (r["driver_id"],)).fetchone() \
+            if r["driver_id"] else None
+        item = {"alarm_id": r["alarm_id"] or "", "status": r["status"] or "", "reason": r["reason"] or "",
+                "at": clock(r["created_at"]), "when": r["created_at"],
+                "name": (d["name"] if d else "Driver"), "tel": tel_digits(d["phone"]) if d else "",
+                "driver_id": r["driver_id"]}
+        if r["lat"] is not None and r["lng"] is not None:
+            ll = str(round(r["lat"], 6)) + "," + str(round(r["lng"], 6))
+            item["map_url"] = "https://www.google.com/maps/search/?api=1&query=" + ll
+        if r["order_id"]:
+            o = db().execute("SELECT code, primary_no FROM orders WHERE id=?", (r["order_id"],)).fetchone()
+            if o:
+                item["order"] = (_rv(o, "primary_no") or o["code"])
+        out.append(item)
+    return out
+
+
+def driver_noonlight_state(did):
+    r = db().execute("""SELECT alarm_id, status, reason, created_at FROM noonlight_alarms
+                        WHERE driver_id=? AND status IN ('active','psap') ORDER BY id DESC LIMIT 1""",
+                     (did,)).fetchone()
+    if not r:
+        return None
+    return {"alarm_id": r["alarm_id"], "status": r["status"], "reason": r["reason"] or "",
+            "at": clock(r["created_at"])}
+
+
 def raise_call_alert(who, name, phone, note, driver_id=None, restaurant_id=None, order_id=None):
     """Somebody hit the call button. Put it on the dispatch board so it is not missed."""
     db().execute("""INSERT INTO call_alerts(who,driver_id,restaurant_id,order_id,name,phone,note,created_at)
@@ -17053,7 +17233,7 @@ def open_call_alerts():
         _ak = a.keys()
         item["kind"] = (a["kind"] if "kind" in _ak else None) or ""
         item["trip"] = None
-        if item["kind"] == "911" and a["order_id"]:
+        if item["kind"] in ("911", "noo") and a["order_id"]:
             try:
                 _o = db().execute("SELECT * FROM orders WHERE id=?", (a["order_id"],)).fetchone()
                 if _o:
@@ -17067,7 +17247,7 @@ def open_call_alerts():
             d = db().execute("SELECT * FROM drivers WHERE id=?", (a["driver_id"],)).fetchone()
             if d:
                 loc = loc_block(d)
-                if not loc and item["kind"] == "911" and "lat" in _ak and a["lat"] is not None and a["lng"] is not None:
+                if not loc and item["kind"] in ("911", "noo") and "lat" in _ak and a["lat"] is not None and a["lng"] is not None:
                     _ll = str(round(a["lat"], 6)) + "," + str(round(a["lng"], 6))
                     loc = {"lat": a["lat"], "lng": a["lng"], "address": None, "at": clock(a["created_at"]),
                            "map_url": "https://www.google.com/maps/search/?api=1&query=" + _ll}
@@ -17869,6 +18049,214 @@ def api_driver_call_911():
                        ". Your order went to another driver" if len(moved) == 1 else
                        ". Your orders went to another driver" if moved else "") + ". Dispatch will check on you.")
     return jsonify({"ok": True})
+
+@app.post("/api/driver/noonlight")
+def api_driver_noonlight():
+    """The driver sent a Noonlight alarm from the app (the Get help button). A reason is required.
+    Noonlight texts and calls the driver and can send emergency services to their location; dispatch
+    gets an urgent alert with where they are and what they were doing, and the driver goes on break."""
+    did = session.get("driver_id")
+    if not did:
+        return jsonify({"ok": False}), 403
+    d = db().execute("SELECT * FROM drivers WHERE id=?", (did,)).fetchone()
+    data = request.get_json(silent=True) or {}
+    reason = " ".join(str(data.get("reason") or "").split())[:200]
+    if not reason:
+        return jsonify({"ok": False, "error": "A reason is required to send a Noonlight alarm."}), 400
+    try:
+        lat, lng = float(data["lat"]), float(data["lng"])
+    except (KeyError, TypeError, ValueError):
+        lat = lng = None
+    acc = None
+    try:
+        acc = float(data["acc"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    if lat is not None:
+        db().execute("UPDATE drivers SET last_lat=?,last_lng=?,last_loc_at=? WHERE id=?", (lat, lng, now(), did))
+        db().commit()
+        try:
+            update_driver_addr(did, lat, lng, force=True)
+        except Exception:
+            pass
+    oid = None
+    rank = {"enroute": 0, "at_restaurant": 1, "received": 2, "assigned": 3}
+    live = db().execute("""SELECT id, dispatch_status FROM orders WHERE driver_id=?
+                           AND dispatch_status IN ('assigned','received','at_restaurant','enroute')""", (did,)).fetchall()
+    if live:
+        oid = sorted(live, key=lambda r: (rank.get(r["dispatch_status"], 9), r["id"]))[0]["id"]
+    stage_words = {"enroute": "on the way to the customer (food already picked up)", "at_restaurant": "at the restaurant",
+                   "received": "heading to the restaurant", "assigned": "not accepted yet"}
+    keep = [r for r in live if r["dispatch_status"] == "enroute"]
+    moved = [r for r in live if r["dispatch_status"] != "enroute"]
+    addr = None
+    if oid:
+        _o = db().execute("SELECT address FROM orders WHERE id=?", (oid,)).fetchone()
+        addr = _o["address"] if _o else None
+    if not addr and "last_addr" in d.keys():
+        addr = d["last_addr"]
+    # what Noonlight's dispatchers see: driver name and phone are the alarm owner; the orders they
+    # are carrying go in the entry instructions, the only free-text field the alarm API offers
+    _ords = db().execute("""SELECT o.code, o.customer_name, o.address AS cust_addr, o.dispatch_status,
+                                   r.name AS rest_name, r.address AS rest_addr
+                            FROM orders o LEFT JOIN restaurants r ON r.id=o.restaurant_id
+                            WHERE o.driver_id=?
+                            AND o.dispatch_status IN ('assigned','received','at_restaurant','enroute')
+                            ORDER BY o.id LIMIT 3""", (did,)).fetchall()
+    stage_words2 = {"enroute": "food picked up, driving to the customer", "at_restaurant": "at the restaurant",
+                    "received": "heading to the restaurant", "assigned": "not accepted yet"}
+    _lines = ["Fleet Foot Delivery driver " + (d["name"] or "Driver") + ", phone " + (d["phone"] or "unknown") + "."]
+    for _o in _ords:
+        _no = (_rv(_o, "primary_no") or _o["code"] or "").strip()
+        _lines.append("Order " + _no + ": pickup " + ((_o["rest_name"] or "") + " " + (_o["rest_addr"] or "")).strip() +
+                      "; delivering to " + (_o["customer_name"] or "customer") + ", " + (_o["cust_addr"] or "") +
+                      " (" + stage_words2.get(_o["dispatch_status"], _o["dispatch_status"]) + ").")
+    if not _ords:
+        _lines.append("Not carrying any orders right now.")
+    nl_ok, nl_id, nl_err = noonlight_create_alarm(d["name"], d["phone"], lat, lng, acc, addr=addr, pin=d["pin"],
+                                                  owner_id="driver-" + str(did), instructions=" ".join(_lines))
+    db().execute("""INSERT INTO noonlight_alarms(driver_id,order_id,alarm_id,status,reason,lat,lng,note,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                 (did, oid, nl_id, "active" if nl_ok else "failed", reason, lat, lng,
+                  "" if nl_ok else (nl_err or "failed"), now(), now()))
+    db().commit()
+    note = "URGENT: Noonlight alarm is active. Noonlight will text and call the driver and can send emergency services to their location."
+    note += " Reason: " + reason + ("" if reason.endswith((".", "!", "?")) else ".")
+    if live:
+        top = [r for r in live if r["id"] == oid][0]
+        note += " They were " + stage_words.get(top["dispatch_status"], top["dispatch_status"]) + "."
+        note += " They are on break now."
+        if keep:
+            note += " %s stayed with them (not reassigned)." % (
+                "The order they picked up" if len(keep) == 1 else "The %d orders they picked up" % len(keep))
+        if moved:
+            note += " %s back in the queue for another driver." % (
+                "1 order not picked up yet went" if len(moved) == 1 else "%d orders not picked up yet went" % len(moved))
+    else:
+        note += " They were not on an order. They are on break now."
+    if not nl_ok:
+        note += " WARNING: the alarm did NOT reach Noonlight (" + (nl_err or "failed") + "). Call the driver now."
+    db().execute("""INSERT INTO call_alerts(who,driver_id,order_id,name,phone,note,created_at,kind,lat,lng)
+                    VALUES('driver',?,?,?,?,?,?,'noo',?,?)""",
+                 (did, oid, d["name"], d["phone"], note, now(), lat, lng))
+    db().commit()
+    log("call_alert", "driver " + (d["name"] or "") + ": NOONLIGHT ALARM" +
+        ("" if nl_ok else " (failed to reach Noonlight)") + (" (order id %s)" % oid if oid else ""))
+    _code = None
+    if oid:
+        _c = db().execute("SELECT code, primary_no FROM orders WHERE id=?", (oid,)).fetchone()
+        _code = (_rv(_c, "primary_no") or _c["code"]) if _c else None
+    db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
+                 (did, "driver", "Automatic message: I sent a Noonlight alarm. Please follow up with me." +
+                  (" I was on order " + _code + "." if _code else "") +
+                  (" Reason: " + reason if reason else ""), now()))
+    db().commit()
+    if moved:
+        db().execute("""UPDATE orders SET driver_id=NULL, stack_seq=NULL, dispatch_status='queued'
+                        WHERE driver_id=? AND dispatch_status IN ('assigned','received','at_restaurant')""", (did,))
+        db().commit()
+        for r in moved:
+            log("order", "order id %s taken off %s (Noonlight alarm) and put back in the queue" % (r["id"], d["name"] or "driver"))
+    set_driver_status(did, "break", "You sent a Noonlight alarm, so you are on break" +
+                      (". The order you picked up is still yours" if len(keep) == 1 else
+                       ". The orders you picked up are still yours" if keep else "") +
+                      (" and your order that wasn't picked up went to another driver" if moved and keep else
+                       ". Your order went to another driver" if len(moved) == 1 else
+                       ". Your orders went to another driver" if moved else "") + ". Dispatch will check on you.")
+    return jsonify({"ok": True, "nl_ok": nl_ok, "alarm_id": nl_id, "error": nl_err})
+
+
+@app.post("/api/driver/noonlight/cancel")
+def api_driver_noonlight_cancel():
+    """The driver stands down their own Noonlight alarm by entering their driver login PIN."""
+    did = session.get("driver_id")
+    if not did:
+        return jsonify({"ok": False}), 403
+    d = db().execute("SELECT * FROM drivers WHERE id=?", (did,)).fetchone()
+    data = request.get_json(silent=True) or {}
+    pin = str(data.get("pin") or "").strip()
+    if not pin or pin != (d["pin"] or ""):
+        return jsonify({"ok": False, "error": "That is not your driver PIN. Try again."}), 403
+    row = db().execute("""SELECT * FROM noonlight_alarms WHERE driver_id=? AND status IN ('active','psap')
+                          ORDER BY id DESC LIMIT 1""", (did,)).fetchone()
+    if not row:
+        return jsonify({"ok": True, "had_alarm": False})
+    ok, err = False, None
+    if row["alarm_id"] and noonlight_token():
+        ok, err = noonlight_cancel_alarm(row["alarm_id"], pin)
+    st = "canceled" if ok else "stand_down"
+    line = "Driver stood down the alarm with their PIN" + \
+           ("" if ok else " but Noonlight was not told (" + (err or "?") + ")") + " (" + clock(now()) + ")"
+    note = ((row["note"] or "") + " " + line)[:500]
+    db().execute("UPDATE noonlight_alarms SET status=?, note=?, updated_at=? WHERE id=?",
+                 (st, note, now(), row["id"]))
+    db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
+                 (did, "driver", "Automatic message: I stood down my Noonlight alarm with my PIN." +
+                  ("" if ok else " Dispatch, Noonlight may not have gotten the cancel."), now()))
+    db().commit()
+    return jsonify({"ok": True, "noonlight_ok": ok, "error": err})
+
+
+@app.post("/api/noonlight/webhook")
+def api_noonlight_webhook():
+    """Noonlight posts alarm events here (status changes, emergency dispatch contacted, closed)."""
+    raw = request.get_data()
+    secret = (os.environ.get("NOONLIGHT_WEBHOOK_SECRET") or "").strip()
+    if secret:
+        import hmac as _hmac
+
+        def _sig_ok(data, sig):
+            want = base64.b64encode(_hmac.new(secret.encode("utf-8"), data, hashlib.sha256).digest()).decode("utf-8")
+            return _hmac.compare_digest(want, sig or "")
+        sig = request.headers.get("X-Noonlight-Signature", "")
+        ok = _sig_ok(raw, sig)
+        if not ok:
+            try:
+                ok = _sig_ok(json.dumps(json.loads(raw), separators=(",", ":")).encode("utf-8"), sig)
+            except Exception:
+                ok = False
+        if not ok:
+            return jsonify({"ok": False}), 401
+    events = request.get_json(silent=True)
+    if not isinstance(events, list):
+        return jsonify({"ok": True})
+    words = {"alarm.status.canceled": "canceled with Noonlight",
+             "alarm.closed": "closed by Noonlight",
+             "alarm.psap_contacted": "Noonlight contacted emergency dispatch (911 center)"}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        meta = ev.get("meta") or {}
+        aid = meta.get("alarm_id")
+        et = str(ev.get("event_type") or "")
+        if not aid:
+            continue
+        row = db().execute("SELECT * FROM noonlight_alarms WHERE alarm_id=?", (aid,)).fetchone()
+        if not row:
+            continue
+        if et == "alarm.status.canceled":
+            st = "canceled"
+        elif et == "alarm.closed":
+            st = "closed"
+        elif et == "alarm.psap_contacted":
+            st = "psap"
+        else:
+            st = et[:40] or row["status"]
+        line = words.get(et) or et
+        note = (row["note"] or "")
+        if line and line not in note:
+            note = (note + (" " if note else "") + line + " (" + clock(now()) + ")")[:500]
+        db().execute("UPDATE noonlight_alarms SET status=?, note=?, closed_at=?, updated_at=? WHERE id=?",
+                     (st, note, now() if st == "closed" else row["closed_at"], now(), row["id"]))
+        if row["driver_id"]:
+            extra = ""
+            if et == "alarm.status.canceled" and (meta.get("canceled_by") or {}).get("phone"):
+                extra = " from " + str(meta["canceled_by"]["phone"])
+            db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
+                         (row["driver_id"], "system", "Noonlight update: " + line + extra + ".", now()))
+        db().commit()
+    return jsonify({"ok": True})
+
 
 @app.post("/api/restaurant/call-dispatch")
 def api_rest_call_dispatch():

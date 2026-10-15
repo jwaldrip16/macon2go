@@ -83,6 +83,7 @@
 <div id="pageBoard">
 <div id="soundWake" class="soundwake hidden" onclick="try{ffSound.unlock();ffSound.play('ping');}catch(e){}">
   Sound is asleep. Click here once so driver calls and new orders can be heard.</div>
+<div id="nlPanel" class="panel hidden" style="border:2px solid #b3261e;background:#fff5f4;margin-bottom:10px"></div>
 <div id="callAlerts" class="hidden"></div>
 <div id="staffAlerts" class="hidden"></div>
 <div id="assignBar" class="flashbar hidden"></div>
@@ -747,6 +748,24 @@ function callRing(on){
   if (on && !CALL_RING){ CALL_RING = setInterval(function(){ try { ffSound.play('call'); } catch(e){} }, 10000); }
   if (!on && CALL_RING){ clearInterval(CALL_RING); CALL_RING = null; }
 }
+const NL_LABEL = {active: 'Noonlight is texting and calling the driver',
+  psap: 'Noonlight contacted emergency dispatch (911 center)',
+  failed: 'DID NOT reach Noonlight: call the driver',
+  stand_down: 'Driver stood down with their PIN but Noonlight was not told. Check with them'};
+function nlPanel(list){
+  const el = document.getElementById('nlPanel');
+  if (!el) return;
+  if (!list || !list.length){ el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = '<h3 style="color:#b3261e;margin:0 0 6px 0">Noonlight alarms</h3>' + list.map(a =>
+    '<div style="border-top:1px solid #f0c9c4;padding:8px 0">' +
+    '<strong>' + esc(a.name) + '</strong>' + (a.order ? ' · order ' + esc(a.order) : '') +
+    '<br><span class="small">' + esc(NL_LABEL[a.status] || a.status) + ' · since ' + esc(a.at) + '</span>' +
+    (a.reason ? '<br><span class="small">Reason: ' + esc(a.reason) + '</span>' : '') +
+    '<br>' + (a.tel ? '<a class="btn tiny" href="tel:' + a.tel + '">Call driver</a> ' : '') +
+    (a.map_url ? '<a class="btn tiny" href="' + a.map_url + '" target="_blank" rel="noopener">Map</a>' : '') +
+    '</div>').join('');
+}
 function drawAlerts(list){
   const box = document.getElementById('callAlerts');
   callRing(list.length > 0);
@@ -1200,6 +1219,7 @@ async function board(force){
   window.LAST_DRIVERS = res.drivers;
   chatNotify(res);
   drawAlerts(res.alerts || []);
+  try { nlPanel(res.noonlight || []); } catch(e) {}
   try { schedWaiting(res.sched_waiting || []); } catch(e) {}
   if (document.getElementById('rests')) document.getElementById('rests').innerHTML = (res.restaurants||[]).map(r=>
     '<div class="driver"><div><strong>'+r.name+'</strong> <span class="pill '+

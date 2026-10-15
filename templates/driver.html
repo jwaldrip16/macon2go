@@ -419,6 +419,12 @@ async function state(){
   renderRun(res.stack, total);
   try { newOrderAlert(res.stack); } catch(e) { console.log('alert skipped', e); }
 }
+let NL_MSG = '';
+function nlBarMsg(t){   // message shown inside the alarm bar; survives the 4s re-render for 8s
+  NL_MSG = t || '';
+  try { renderNoonlight(NL_LAST); } catch(e){}
+  if (t) setTimeout(function(){ if (NL_MSG === t){ NL_MSG = ''; try { renderNoonlight(NL_LAST); } catch(e){} } }, 8000);
+}
 function renderNoonlight(nl){
   NL_LAST = nl || null;
   const el = document.getElementById('nlNote');
@@ -430,17 +436,18 @@ function renderNoonlight(nl){
     el.innerHTML = 'Noonlight alarm active since ' + nl.at + '. ' + tail +
       ' <input id="nlPin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" ' +
       'style="width:80px;max-width:30%;padding:4px 6px" onkeydown="if(event.key===\'Enter\')nlStandDown()">' +
-      ' <button type="button" class="btn tiny" onclick="nlStandDown()">Stand down</button>';
+      ' <button type="button" class="btn tiny" onclick="nlStandDown()">Stand down</button>' +
+      (NL_MSG ? '<br><span class="small" style="color:#b3261e">' + esc(NL_MSG) + '</span>' : '');
   } else { el.style.display = 'none'; el.innerHTML = ''; }
 }
 function nlStandDown(){
   const box = document.getElementById('nlPin');
   const pin = box ? (box.value || '').trim() : '';
-  if (!pin){ callNote('Type your driver PIN in the box, then tap Stand down.'); return; }
+  if (!pin){ nlBarMsg('Type your driver PIN in the box, then tap Stand down.'); return; }
   jpost('/api/driver/noonlight/cancel', {pin: pin}).then(function(r){
-    if (r && r.ok) callNote('Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : ''));
-    else callNote((r && r.error) || 'Could not stand down the alarm. Try again.');
-  }).catch(function(){ callNote('Could not stand down the alarm. Try again.'); });
+    if (r && r.ok) nlBarMsg('Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : ''));
+    else nlBarMsg((r && r.error) || 'Could not stand down the alarm. Try again.');
+  }).catch(function(){ nlBarMsg('Could not stand down the alarm. Try again.'); });
 }
 function renderStatus(d){
   MY_STATUS = d.status;

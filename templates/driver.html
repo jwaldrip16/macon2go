@@ -384,7 +384,7 @@ function gateCheck(res, d){
   show('paneSched', true);
   if (GATED !== mode){ refreshSchedule(); if (closed){ DTAB = 'sched'; } else { DTAB = 'chat'; chat(); } }
   GATED = mode;
-  try { MY_STATUS = d.status; gateLocation(d.status, null); } catch(e){}
+  try { MY_STATUS = d.status; gateLocation(d.status, NL_LAST); } catch(e){}
   return true;
 }
 function renderDone(list){
@@ -411,8 +411,8 @@ async function state(){
   try { const dn = document.getElementById('dispNum'); if (dn && res.dispatch_phone) dn.textContent = res.dispatch_phone; } catch(e) {}
   try { drawLate(res.late || [], 'driver'); } catch(e) {}
   try { renderDone(res.done || []); } catch(e) { console.log('done skipped', e); }
-  if (gateCheck(res, d)) return;
   try { renderNoonlight(res.noonlight); } catch(e) { console.log('noonlight skipped', e); }
+  if (gateCheck(res, d)) return;
   try { renderStatus(d); } catch(e) { console.log('status skipped', e); }
   try { renderAvail(res.availability, res.time_off); } catch(e) { console.log(e); }
   const total = res.stack.length;

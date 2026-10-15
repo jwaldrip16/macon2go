@@ -762,7 +762,9 @@ function nlPanel(list){
     '<strong>' + esc(a.name) + '</strong>' + (a.order ? ' · order ' + esc(a.order) : '') +
     '<br><span class="small">' + esc(NL_LABEL[a.status] || a.status) + ' · since ' + esc(a.at) + '</span>' +
     (a.reason ? '<br><span class="small">Reason: ' + esc(a.reason) + '</span>' : '') +
-    (a.alarm_id ? '<br><span class="small">Noonlight alarm id: <code>' + esc(a.alarm_id) + '</code></span>' : '') +
+    (a.alarm_id ? '<br><span class="small">Noonlight alarm id: <code>' + esc(a.alarm_id) + '</code> ' +
+      '<button type="button" class="btn tiny" onclick="nlCopyId(\'' + esc(a.alarm_id) + '\', this)">Copy</button>' +
+      ' <a class="btn tiny" href="https://ui-sendpolice.prod-us1.noonlight.com/" target="_blank" rel="noopener">Open Noonlight</a></span>' : '') +
     '<br>' + (a.tel ? '<a class="btn tiny" href="tel:' + a.tel + '">Call driver</a> ' : '') +
     (a.map_url ? '<a class="btn tiny" href="' + a.map_url + '" target="_blank" rel="noopener">Map</a> ' : '') +
     ((a.status === 'active' || a.status === 'psap') ?
@@ -771,6 +773,18 @@ function nlPanel(list){
       '<button type="button" class="btn tiny" ' +
       'onclick="nlClearAlarm(' + parseInt(a.row_id || 0, 10) + ')">Clear</button>') +
     '</div>').join('');
+}
+function nlCopyId(id, btn){
+  const done = function(){ if(btn){ const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = t; }, 2000); } };
+  if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(id).then(done, function(){ nlCopyFallback(id, done); }); }
+  else nlCopyFallback(id, done);
+}
+function nlCopyFallback(id, done){
+  const ta = document.createElement('textarea');
+  ta.value = id; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch(e){}
+  document.body.removeChild(ta); done();
 }
 async function nlClearAlarm(row_id){
   if (!confirm('Clear this alarm from the panel?')) return;

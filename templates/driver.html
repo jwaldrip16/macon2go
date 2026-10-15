@@ -427,12 +427,15 @@ function renderNoonlight(nl){
     const tail = nl.status === 'psap' ? 'Emergency dispatch has been contacted.' :
       'Noonlight will text and call you; keep your phone with you.';
     el.innerHTML = 'Noonlight alarm active since ' + nl.at + '. ' + tail +
+      ' <input id="nlPin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" ' +
+      'style="width:80px;max-width:30%;padding:4px 6px" onkeydown="if(event.key===\'Enter\')nlStandDown()">' +
       ' <button type="button" class="btn tiny" onclick="nlStandDown()">Stand down</button>';
   } else { el.style.display = 'none'; el.innerHTML = ''; }
 }
 function nlStandDown(){
-  const pin = window.prompt('Enter your driver PIN to stand down the alarm:');
-  if (!pin) return;
+  const box = document.getElementById('nlPin');
+  const pin = box ? (box.value || '').trim() : '';
+  if (!pin){ callNote('Type your driver PIN in the box, then tap Stand down.'); return; }
   jpost('/api/driver/noonlight/cancel', {pin: pin}).then(function(r){
     if (r && r.ok) callNote('Noonlight alarm stood down.' + (r.noonlight_ok === false ? ' Dispatch, Noonlight may not have gotten the cancel.' : ''));
     else callNote((r && r.error) || 'Could not stand down the alarm. Try again.');

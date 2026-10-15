@@ -9552,7 +9552,8 @@ def api_broadcast():
         rows = db().execute("SELECT * FROM drivers WHERE id IN (%s)" %
                             ",".join("?" * len(ids)), ids).fetchall() if ids else []
     elif audience == "active":
-        rows = db().execute("SELECT * FROM drivers WHERE status='online'").fetchall()
+        # On shift = online or on break, same as the On shift tab on the board
+        rows = db().execute("SELECT * FROM drivers WHERE status IN ('online','break')").fetchall()
     elif audience in ROSTERS:
         rows = [r for r in db().execute("SELECT * FROM drivers").fetchall()
                 if driver_group(r) == audience]

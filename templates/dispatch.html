@@ -762,9 +762,26 @@ function nlPanel(list){
     '<strong>' + esc(a.name) + '</strong>' + (a.order ? ' · order ' + esc(a.order) : '') +
     '<br><span class="small">' + esc(NL_LABEL[a.status] || a.status) + ' · since ' + esc(a.at) + '</span>' +
     (a.reason ? '<br><span class="small">Reason: ' + esc(a.reason) + '</span>' : '') +
+    (a.alarm_id ? '<br><span class="small">Noonlight alarm id: <code>' + esc(a.alarm_id) + '</code></span>' : '') +
     '<br>' + (a.tel ? '<a class="btn tiny" href="tel:' + a.tel + '">Call driver</a> ' : '') +
-    (a.map_url ? '<a class="btn tiny" href="' + a.map_url + '" target="_blank" rel="noopener">Map</a>' : '') +
+    (a.map_url ? '<a class="btn tiny" href="' + a.map_url + '" target="_blank" rel="noopener">Map</a> ' : '') +
+    ((a.status === 'active' || a.status === 'psap') ?
+      '<button type="button" class="btn tiny" style="border-color:#b3261e;color:#b3261e" ' +
+      'onclick="nlStandDownDispatch(\'' + esc(a.alarm_id || '') + '\', \'' + esc(a.name || '').replace(/'/g, '') + '\')">Stand down</button>' : '') +
     '</div>').join('');
+}
+async function nlStandDownDispatch(alarm_id, name){
+  if (!alarm_id){
+    alert('Noonlight never got this alarm, so there is nothing to stand down there. Call the driver instead.');
+    return;
+  }
+  if (!confirm('Stand down the Noonlight alarm for ' + name + '? Noonlight will cancel it and stop texting or calling the driver.')) return;
+  const r = await fetch('/api/dispatch/noonlight/cancel', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({alarm_id: alarm_id})});
+  const d = await r.json().catch(function(){ return {}; });
+  if (!d.ok){ alert(d.error || 'Could not stand down the alarm. Try again.'); return; }
+  alert(d.noonlight_ok ? 'Stood down. Noonlight canceled the alarm.' :
+    'Stood down on your board, but Noonlight could not be told: ' + (d.error || '?') + '. Check with the driver.');
 }
 function drawAlerts(list){
   const box = document.getElementById('callAlerts');

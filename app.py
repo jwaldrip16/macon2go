@@ -17160,7 +17160,9 @@ def noonlight_cancel_alarm(alarm_id, pin):
     token = noonlight_token()
     if not token:
         return False, "Noonlight is not set up yet."
-    body = {"status": "CANCELED", "pin": str(pin)}
+    body = {"status": "CANCELED"}
+    if pin:
+        body["pin"] = str(pin)
     req = urllib.request.Request(noonlight_base() + "/dispatch/v1/alarms/" + str(alarm_id) + "/status",
                                  data=json.dumps(body).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json",
@@ -18194,6 +18196,42 @@ def api_driver_noonlight_cancel():
                  (did, "driver", "Automatic message: I stood down my Noonlight alarm with my PIN." +
                   ("" if ok else " Dispatch, Noonlight may not have gotten the cancel."), now()))
     db().commit()
+    return jsonify({"ok": True, "noonlight_ok": ok, "error": err})
+
+
+@app.post("/api/dispatch/noonlight/cancel")
+def api_dispatch_noonlight_cancel():
+    """Dispatch stands down a driver's Noonlight alarm from the board panel."""
+    if not dispatcher_required():
+        return jsonify({"ok": False}), 403
+    data = request.get_json(silent=True) or {}
+    aid = str(data.get("alarm_id") or "").strip()
+    if not aid:
+        return jsonify({"ok": False, "error": "Missing the alarm id."}), 400
+    row = db().execute("SELECT * FROM noonlight_alarms WHERE alarm_id=? AND status IN ('active','psap')",
+                       (aid,)).fetchone()
+    if not row:
+        return jsonify({"ok": False, "error": "That alarm is not open anymore."}), 404
+    who = (session.get("dispatcher_name") or "Dispatch").strip()
+    ok, err = False, None
+    if row["alarm_id"] and noonlight_token():
+        dpin = db().execute("SELECT pin FROM drivers WHERE id=?", (row["driver_id"],)).fetchone() \
+            if row["driver_id"] else None
+        ok, err = noonlight_cancel_alarm(row["alarm_id"], (dpin["pin"] or "") if dpin else "")
+    st = "canceled" if ok else "stand_down"
+    line = "Dispatch stood down the alarm (" + who + \
+           ("" if ok else ", but Noonlight was not told (" + (err or "?") + ")") + ") (" + clock(now()) + ")"
+    note = ((row["note"] or "") + " " + line)[:500]
+    db().execute("UPDATE noonlight_alarms SET status=?, note=?, updated_at=? WHERE id=?",
+                 (st, note, now(), row["id"]))
+    if row["driver_id"]:
+        db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
+                     (row["driver_id"], "system",
+                      "Automatic message: Dispatch stood down your Noonlight alarm." +
+                      ("" if ok else " Noonlight may not have gotten the cancel, so call the driver."),
+                      now()))
+    db().commit()
+    log("noonlight", "dispatch stand_down alarm " + str(row["alarm_id"]) + " by " + who)
     return jsonify({"ok": True, "noonlight_ok": ok, "error": err})
 
 

@@ -894,10 +894,15 @@ function locFail(err){
     (err && err.code != null ? ' (code ' + err.code + ')' : '');
 }
 function startLocation(){
-  if(!navigator.geolocation){ locFail(); return; }
-  navigator.geolocation.getCurrentPosition(function(p){ LAST_FIX = p.coords; sendFix(true); }, locFail,
-    {enableHighAccuracy:true, timeout:15000});
-  navigator.geolocation.watchPosition(pushFix, locFail, {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+  if(!navigator.geolocation){ locFail(null); return; }
+  let WATCH = null;
+  const got = function(p){ LAST_FIX = p.coords; sendFix(true);
+    if(!WATCH){ WATCH = navigator.geolocation.watchPosition(pushFix, function(){}, {enableHighAccuracy:true, maximumAge:0, timeout:30000}); } };
+  // GPS first (drivers want precision outdoors); if the phone cannot get a GPS fix,
+  // fall back to network location so drivers inside a restaurant still report.
+  navigator.geolocation.getCurrentPosition(got, function(){
+    navigator.geolocation.getCurrentPosition(got, locFail, {enableHighAccuracy:false, timeout:20000, maximumAge:60000});
+  }, {enableHighAccuracy:true, timeout:15000});
   setInterval(function(){ sendFix(false); }, 3000);
   setInterval(keepAwake, 5000);
   document.addEventListener('visibilitychange', function(){

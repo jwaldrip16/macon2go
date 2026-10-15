@@ -767,8 +767,17 @@ function nlPanel(list){
     (a.map_url ? '<a class="btn tiny" href="' + a.map_url + '" target="_blank" rel="noopener">Map</a> ' : '') +
     ((a.status === 'active' || a.status === 'psap') ?
       '<button type="button" class="btn tiny" style="border-color:#b3261e;color:#b3261e" ' +
-      'onclick="nlStandDownDispatch(\'' + esc(a.alarm_id || '') + '\', \'' + esc(a.name || '').replace(/'/g, '') + '\')">Stand down</button>' : '') +
+      'onclick="nlStandDownDispatch(\'' + esc(a.alarm_id || '') + '\', \'' + esc(a.name || '').replace(/'/g, '') + '\')">Stand down</button>' :
+      '<button type="button" class="btn tiny" ' +
+      'onclick="nlClearAlarm(' + parseInt(a.row_id || 0, 10) + ')">Clear</button>') +
     '</div>').join('');
+}
+async function nlClearAlarm(row_id){
+  if (!confirm('Clear this alarm from the panel?')) return;
+  const r = await fetch('/api/dispatch/noonlight/cancel', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({clear: true, row_id: row_id})});
+  const d = await r.json().catch(function(){ return {}; });
+  if (!d.ok){ alert(d.error || 'Could not clear it. Try again.'); }
 }
 async function nlStandDownDispatch(alarm_id, name){
   if (!alarm_id){

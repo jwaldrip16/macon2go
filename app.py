@@ -17189,7 +17189,7 @@ def board_noonlight():
     for r in rows:
         d = db().execute("SELECT name, phone FROM drivers WHERE id=?", (r["driver_id"],)).fetchone() \
             if r["driver_id"] else None
-        item = {"alarm_id": r["alarm_id"] or "", "status": r["status"] or "", "reason": r["reason"] or "",
+        item = {"row_id": r["id"], "alarm_id": r["alarm_id"] or "", "status": r["status"] or "", "reason": r["reason"] or "",
                 "at": clock(r["created_at"]), "when": r["created_at"],
                 "name": (d["name"] if d else "Driver"), "tel": tel_digits(d["phone"]) if d else "",
                 "driver_id": r["driver_id"]}
@@ -18205,6 +18205,18 @@ def api_dispatch_noonlight_cancel():
     if not dispatcher_required():
         return jsonify({"ok": False}), 403
     data = request.get_json(silent=True) or {}
+    who = (session.get("dispatcher_name") or "Dispatch").strip()
+    if data.get("clear"):
+        row = db().execute("SELECT * FROM noonlight_alarms WHERE id=?", (data.get("row_id"),)).fetchone()
+        if not row or row["status"] in ("closed", "canceled"):
+            return jsonify({"ok": False, "error": "That alarm is not open anymore."}), 404
+        line = "Dispatch cleared this from the panel (" + who + ") (" + clock(now()) + ")"
+        note = ((row["note"] or "") + " " + line)[:500]
+        db().execute("UPDATE noonlight_alarms SET status='closed', note=?, updated_at=? WHERE id=?",
+                     (note, now(), row["id"]))
+        db().commit()
+        log("noonlight", "dispatch cleared panel row " + str(row["id"]) + " by " + who)
+        return jsonify({"ok": True, "noonlight_ok": None, "error": None})
     aid = str(data.get("alarm_id") or "").strip()
     if not aid:
         return jsonify({"ok": False, "error": "Missing the alarm id."}), 400
@@ -18212,7 +18224,6 @@ def api_dispatch_noonlight_cancel():
                        (aid,)).fetchone()
     if not row:
         return jsonify({"ok": False, "error": "That alarm is not open anymore."}), 404
-    who = (session.get("dispatcher_name") or "Dispatch").strip()
     ok, err = False, None
     if row["alarm_id"] and noonlight_token():
         dpin = db().execute("SELECT pin FROM drivers WHERE id=?", (row["driver_id"],)).fetchone() \

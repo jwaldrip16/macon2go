@@ -882,10 +882,16 @@ function pushFix(pos){
   LAST_FIX = pos.coords;
   sendFix(false);
 }
-function locFail(){
+function locFail(err){
   const el = document.getElementById('locNote');
-  if(el) el.textContent = 'Location is off, so dispatch cannot see you on the map. Turn it on in your ' +
-    'browser settings and reload.';
+  if(!el) return;
+  let why;
+  if (err && err.code === 1) why = 'Location permission is blocked for this app. Android Settings, Apps, FF Driver, Permissions, Location, then Allow.';
+  else if (err && err.code === 2) why = 'The phone could not get a location fix. Step outside or near a window and give it a minute.';
+  else if (err && err.code === 3) why = 'Finding you took too long. Step outside or near a window and give it a minute.';
+  else why = 'Turn location on in your browser settings and reload.';
+  el.textContent = 'Dispatch cannot see you on the map. ' + why +
+    (err && err.code != null ? ' (code ' + err.code + ')' : '');
 }
 function startLocation(){
   if(!navigator.geolocation){ locFail(); return; }

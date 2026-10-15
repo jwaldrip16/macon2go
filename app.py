@@ -5379,6 +5379,22 @@ def api_track_tip(code):
     out["pay"] = pp_info(db().execute("SELECT * FROM orders WHERE id=?", (o["id"],)).fetchone())
     return jsonify(out)
 
+def _page_ver():
+    """Short hash of driver.html, so an app left open for days reloads itself after a deploy."""
+    try:
+        import hashlib as _h
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 'driver.html')
+        with open(p, 'rb') as f:
+            return _h.sha1(f.read()).hexdigest()[:10]
+    except Exception:
+        return '1'
+
+PAGE_VER = _page_ver()
+
+@app.context_processor
+def _inject_page_ver():
+    return {"page_ver": PAGE_VER}
+
 @app.context_processor
 def inject_paypal():
     return {"pp_enabled": pp_enabled(), "pp_on": pp_enabled()}
@@ -13238,6 +13254,7 @@ def api_driver_state():
                         (did, setting("driver_done_cleared_at", str) or "")).fetchall()
     scheduled = d["status"] != "offline" or driver_group(d) == "scheduled"
     return jsonify({"ok": True,
+                    "page_ver": PAGE_VER,
                     "business_open": business_is_open(),
                     "dispatch_tel": tel_digits(dispatch_phone(driver_phone_region(did))),
                     "dispatch_phone": nice_phone(dispatch_phone(driver_phone_region(did))),

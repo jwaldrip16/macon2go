@@ -96,12 +96,11 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
     <div id="chat" class="chat tall"></div>
     <div class="row"><input id="chatBox" placeholder="Ask dispatch to put you online or on break"
         onkeydown="if(event.key==='Enter')send()"><button class="btn" onclick="send()">Send</button></div>
-    <p class="muted small">Only dispatch can change your status. Tap a request below and they get it
-       in chat.</p>
+    <p class="muted small" id="askNote">Only dispatch can change your status. Tap a request below and they get it in chat.</p>
     <div class="row" id="askRow">
-      <button class="btn small" onclick="ask('online')">Ask to go online</button>
-      <button class="btn small" onclick="ask('break')">Ask for a break</button>
-      <button class="btn small" onclick="ask('offline')">Ask to go offline</button>
+      <button class="btn small" id="askOnline" onclick="ask('online')">Ask to go online</button>
+      <button class="btn small" id="askBreak" onclick="ask('break')">Ask for a break</button>
+      <button class="btn small" id="askOffline" onclick="ask('offline')">Ask to go offline</button>
     </div>
   </section>
 </div>
@@ -408,6 +407,8 @@ async function state(){
   if(!res.ok){ window.location='/driver/login'; return; }
   try { if (res.page_ver && res.page_ver !== PAGE_VER){ const k = 'ff_pv_' + res.page_ver; if (!sessionStorage.getItem(k)){ sessionStorage.setItem(k, '1'); location.reload(); return; } } } catch(e) {}
   const d = res.driver;
+  SELF_ON = !!res.self_status;
+  try { selfLabels(); } catch(e) {}
   try { setDispatchTel(res.dispatch_tel); } catch(e) {}
   try { const dn = document.getElementById('dispNum'); if (dn && res.dispatch_phone) dn.textContent = res.dispatch_phone; } catch(e) {}
   try { drawLate(res.late || [], 'driver'); } catch(e) {}
@@ -508,9 +509,9 @@ function renderStatus(d){
     ((d.region_queues||[]).length > 1 || ((d.region_queues||[])[0]||{}).id
       ? '<br>' + (d.region_queues||[]).map(q => q.name+(q.paused?' (paused)':'')+': '+q.waiting+' waiting'+(q.waiting?' (oldest '+q.oldest_min+' min)':'')+', '+q.drivers_on+' on').join('<br>')
       : '')+'</div></div>'+
-    '<div><button class="btn tiny" onclick="ask(\'online\')">Request online</button>'+
-    '<button class="btn tiny" onclick="ask(\'break\')">Request break</button>'+
-    '<button class="btn tiny" onclick="ask(\'offline\')">Request clock out</button></div></div>';
+    '<div><button class="btn tiny" onclick="ask(\'online\')">'+(SELF_ON?'Go online':'Request online')+'</button>'+
+    '<button class="btn tiny" onclick="ask(\'break\')">'+(SELF_ON?'Take a break':'Request break')+'</button>'+
+    '<button class="btn tiny" onclick="ask(\'offline\')">'+(SELF_ON?'Clock out':'Request clock out')+'</button></div></div>';
 }
 function isCalledIn(o){ return o.order_method==='phone' || o.order_method==='online'; }
 function kitchenLabel(o){
@@ -813,7 +814,7 @@ function pickOnlineRegions(opts, picked){
       (picked.length===0 || picked.includes(r.id) ? ' checked' : '')+'> '+
       String(r.name).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</label>').join('')+
     '<div id="olMsg" class="muted small"></div><div class="row">'+
-    '<button class="btn primary" id="olGo">Request online</button>'+
+    '<button class="btn primary" id="olGo">'+(SELF_ON?'Go online':'Request online')+'</button>'+
     '<button class="btn" onclick="document.getElementById(\'olModal\').remove()">Cancel</button></div></div>';
   document.body.appendChild(m);
   document.getElementById('olGo').onclick = async ()=>{
@@ -908,6 +909,19 @@ async function send(){
 }
 let LAST_FIX = null;
 let MY_STATUS = 'offline';   // no fixes leave the phone while off shift
+let SELF_ON = false;         // per-brand setting: drivers change their own status
+function selfLabels(){
+  const o = document.getElementById('askOnline');
+  if (o) o.textContent = SELF_ON ? 'Go online' : 'Ask to go online';
+  const b = document.getElementById('askBreak');
+  if (b) b.textContent = SELF_ON ? 'Take a break' : 'Ask for a break';
+  const f = document.getElementById('askOffline');
+  if (f) f.textContent = SELF_ON ? 'Go offline' : 'Ask to go offline';
+  const n = document.getElementById('askNote');
+  if (n) n.textContent = SELF_ON
+    ? 'Tap a button and your status changes right away. Unavailable drivers still message dispatch.'
+    : 'Only dispatch can change your status. Tap a request below and they get it in chat.';
+}
 let FAST = false, LAST_POST = 0, ADDR = '';
 function sendFix(now){
   if(!LAST_FIX) return;

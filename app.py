@@ -12521,6 +12521,14 @@ def dispatch_settings():
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('sched_lead_min',?)", (str(_v),))
             else:
                 FUTURE_LEAD_ERR.append(3)
+        if "self_status_present" in request.form:
+            _ssk = ["self_status"]
+            if brands_on():
+                for _st in db().execute("SELECT id FROM sites ORDER BY name").fetchall():
+                    _ssk.append("self_status_" + str(_st["id"]))
+            for _k in _ssk:
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                             (_k, "1" if request.form.get(_k) else "0"))
         if "future_lead_min" in request.form:
             try:
                 lm = int(request.form["future_lead_min"])
@@ -12765,8 +12773,75 @@ def api_chat_send(driver_id):
         elif "offline" in low or "clock out" in low or "done for" in low:
             want = "offline"
         if want:
-            request_status(driver_id, want)
+            _done, _serr = driver_self_set(driver_id, want)
+            if _serr:
+                db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
+                             (driver_id, "system", _serr, now()))
+                db().commit()
+            elif not _done:
+                request_status(driver_id, want)
     return jsonify({"ok": True})
+
+
+def driver_self_status_site():
+    """The brand row a signed-in driver is working under, for per-brand driver settings.
+    Mirrors staff_brand_site: the company the driver picked in the app, else the brand of
+    the web address, else the main business's own brand row."""
+    if not brands_on():
+        return None
+    _pick = session.get("staff_brand")
+    if _pick and _pick != "main":
+        try:
+            _s = site_by_id(_pick)
+            if _s is not None:
+                return _s
+        except Exception:
+            pass
+    try:
+        _host = _norm_host(request.host)
+        for _row in db().execute("SELECT * FROM sites ORDER BY sort, id").fetchall():
+            if _host in site_domains(_row):
+                return _row
+    except Exception:
+        pass
+    for _mid in sorted(main_named_site_ids()):
+        _s = site_by_id(_mid)
+        if _s is not None:
+            return _s
+    return None
+
+
+def driver_self_status_on(did=None):
+    """Per-brand setting: can drivers change their own status (online/break/offline)?"""
+    _s = driver_self_status_site()
+    return setting("self_status_" + str(_s["id"]) if _s is not None else "self_status", int) == 1
+
+
+def driver_self_set(did, want):
+    """When the brand's setting allows it, a scheduled, on-shift, or on-break driver
+    changes their own status instead of asking. Returns (True, None) once set,
+    (False, None) when the normal request path applies, or (False, error) when the
+    setting applies but refuses. Unavailable drivers always go through dispatch."""
+    _d = db().execute("SELECT * FROM drivers WHERE id=?", (did,)).fetchone()
+    if _d is None or not driver_self_status_on(did):
+        return False, None
+    if not (_d["status"] in ("online", "break") or
+            (_d["status"] == "offline" and driver_group(_d) == "scheduled")):
+        return False, None
+    if want == "online":
+        if not business_is_open():
+            return False, "The business is closed. Message dispatch when it opens and they can put you online."
+        _shut = driver_brands_closed(did)
+        if _shut:
+            return False, _shut + " is outside its hours right now. Drivers can go online 30 minutes before it opens."
+        if not (_d["active"] if _d["active"] is not None else 1):
+            return False, "Your driver account is inactive. Call dispatch."
+    _msg = "You set yourself " + want
+    if want == "online" and day_pick("driver", did):
+        _msg += " in " + region_names(day_pick("driver", did))
+    set_driver_status(did, want, _msg + ".", by="Driver (self)", sender="system")
+    auto_assign()
+    return True, None
 
 
 def request_status(driver_id, want):
@@ -12779,10 +12854,10 @@ def request_status(driver_id, want):
     db().commit()
 
 
-def set_driver_status(driver_id, status, reply):
-    """Dispatch-only. Nothing in the driver app calls this directly."""
+def set_driver_status(driver_id, status, reply, by="Dispatch", sender="dispatch"):
+    """Dispatch-only (or the driver themselves when the per-brand setting allows)."""
     was = db().execute("SELECT status FROM drivers WHERE id=?", (driver_id,)).fetchone()
-    log_driver(driver_id, "Dispatch set " + status + " (was " + (was["status"] if was else "?") + ")", status=status)
+    log_driver(driver_id, by + " set " + status + " (was " + (was["status"] if was else "?") + ")", status=status)
     db().execute("UPDATE drivers SET status=?, pending_request=NULL, last_seen=? WHERE id=?",
                  (status, now(), driver_id))
     activity_mark("driver", driver_id, None if status == "offline" else ("break" if "break" in status else "online"))
@@ -12796,7 +12871,7 @@ def set_driver_status(driver_id, status, reply):
         db().execute("UPDATE drivers SET last_lat=NULL,last_lng=NULL,last_loc_at=NULL,last_addr=NULL,last_addr_lat=NULL,last_addr_lng=NULL WHERE id=?",
                      (driver_id,))
     db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
-                 (driver_id, "dispatch", reply, now()))
+                 (driver_id, sender, reply, now()))
     db().commit()
     # Going on break or offline never takes orders away: every order the driver already has
     # (accepted or not) stays on their run until dispatch reassigns it by hand.
@@ -13273,6 +13348,7 @@ def api_driver_state():
   "noonlight": driver_noonlight_state(did),
                     "business_name": (setting("business_name", str) or "Fleet Foot Delivery"),
                     "scheduled": scheduled,
+                    "self_status": driver_self_status_on(did),
                     "done": [order_dict(o) for o in done],
                     "driver": {"name": d["name"], "status": d["status"],
                                "pending_request": d["pending_request"], "max_stack": d["max_stack"],
@@ -13300,6 +13376,11 @@ def api_driver_request():
         if err:
             return jsonify({"ok": False, "error": err}), 400
         extra = " for " + region_names(day_pick("driver", did) or today_slot_regions("driver", did))
+    _done, _serr = driver_self_set(did, want)
+    if _serr:
+        return jsonify({"ok": False, "error": _serr}), 400
+    if _done:
+        return jsonify({"ok": True, "self": True})
     db().execute("INSERT INTO messages(driver_id,sender,body,created_at) VALUES(?,?,?,?)",
                  (did, "driver", "Requesting " + want + extra + ".", now()))
     db().commit()

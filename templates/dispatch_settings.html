@@ -331,6 +331,12 @@ rsLoad();
   <input name="keep_awake_kitchen" value="{{ s['keep_awake_kitchen'] if s['keep_awake_kitchen'] is defined and s['keep_awake_kitchen'] != None else '1' }}">
   <div class="muted small">Stops phones and tablets from going to sleep while the app is open, so new orders,
     alerts and GPS keep coming in. Each device can still switch it off with the Keep screen awake button.</div>
+  <h2>Driver status changes</h2>
+  <input type="hidden" name="self_status_present" value="1">
+  <label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input type="checkbox" name="self_status" value="1" {{ 'checked' if s.get('self_status','0') == '1' else '' }} style="width:auto"> {% if brands_on %}Tiger Town To Go (the main business): let drivers put themselves online, on break, or offline{% else %}Let drivers put themselves online, on break, or offline{% endif %}</label>
+  {% if brands_on %}{% for b in br_sites %}<label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input type="checkbox" name="self_status_{{ b.id }}" value="1" {{ 'checked' if s.get('self_status_' ~ b.id, '0') == '1' else '' }} style="width:auto"> {{ b.name }}: let drivers put themselves online, on break, or offline</label>
+{% endfor %}{% endif %}
+  <div class="muted small">On: drivers on the schedule, on shift, or on break change their own status and don't wait on dispatch. Off: they ask in the app and dispatch approves. Unavailable drivers can never put themselves online on their own. Going online still follows the business hours.</div>
   <h2>Stack limit</h2>
   <label>Default number of orders a driver can carry at once (1 to 20, or U for unlimited)</label>
   {% set _ms = s['max_stack_default'] if s['max_stack_default'] is defined and s['max_stack_default'] != None and s['max_stack_default'] != '' else '3' %}

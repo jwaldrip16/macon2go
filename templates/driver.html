@@ -42,7 +42,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
   <div id="gateCall"><a class="btn primary calldisp" href="tel:{{ biz_tel }}" onclick="tellDispatch()">Call dispatch</a>
   <div class="muted small callnote"></div></div>
 </div>
-<div class="row" id="sosRow"><button type="button" class="btn" onclick="open911()" style="background:#b3261e;color:#fff;border-color:#b3261e;font-weight:700;width:100%;text-align:center">Get help now (Noonlight)</button></div>
+<div class="row hidden" id="sosRow"><button type="button" class="btn" onclick="open911()" style="background:#b3261e;color:#fff;border-color:#b3261e;font-weight:700;width:100%;text-align:center">Get help now (Noonlight)</button></div>
 <div id="sosBack" class="modalback" style="display:none" onclick="if(event.target===this) close911()">
   <div class="panel modal" role="dialog" aria-labelledby="sosTitle">
     <h3 id="sosTitle" style="margin:0;color:#c0392b">Send a Noonlight alarm?</h3>
@@ -255,6 +255,7 @@ function setDispatchTel(tel){
   });
 }
 function open911(){
+  if (MY_STATUS !== 'online' && MY_STATUS !== 'break'){ nlBarMsg('Go online or on break first so dispatch can find you. In an emergency call 911.'); return; }
   const r = document.getElementById('sosReason'); if (r) r.value = '';
   const g = document.getElementById('sosGo'); if (g) g.disabled = true;
   document.getElementById('sosBack').style.display = 'flex';
@@ -489,6 +490,7 @@ function nlStandDown(){
 }
 function renderStatus(d){
   MY_STATUS = d.status;
+  const srow = document.getElementById('sosRow'); if (srow) srow.classList.toggle('hidden', !(d.status === 'online' || d.status === 'break'));
   gateLocation(d.status, NL_LAST);
   document.getElementById('status').innerHTML =
     '<div class="row"><div>Status <span class="pill '+

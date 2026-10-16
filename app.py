@@ -12530,9 +12530,20 @@ def dispatch_settings():
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
                              (_k, "1" if request.form.get(_k) else "0"))
                 _sfx = "" if _k == "self_status" else _k[len("self_status"):]
-                for _f in ("from", "to"):
-                    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
-                                 ("self_status_" + _f + _sfx, _self_hhmm(request.form.get("self_status_" + _f + _sfx))))
+                _frows = request.form.getlist("self_status_from" + _sfx)
+                _trows = request.form.getlist("self_status_to" + _sfx)
+                _wins = []
+                for _i in range(min(len(_frows), len(_trows), 8)):
+                    _wf = _self_hhmm(_frows[_i])
+                    _wt = _self_hhmm(_trows[_i])
+                    if _wf or _wt:
+                        _wins.append([_wf, _wt])
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                             ("self_status_windows" + _sfx, json.dumps(_wins)))
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                             ("self_status_from" + _sfx, _wins[0][0] if _wins else ""))
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                             ("self_status_to" + _sfx, _wins[0][1] if _wins else ""))
                 try:
                     _mv = max(0, min(20, int(request.form.get("self_status_min" + _sfx) or 0)))
                 except ValueError:
@@ -12854,20 +12865,37 @@ def driver_self_set(did, want):
     _site = driver_self_status_site()
     if _site is not None:
         _sfx = "_" + str(_site["id"])
-    _wfrom = _self_hhmm(setting("self_status_from" + _sfx, str))
-    _wto = _self_hhmm(setting("self_status_to" + _sfx, str))
-    if _wfrom or _wto:
+    _wins = []
+    try:
+        _wraw = setting("self_status_windows" + _sfx, str)
+        _wl = json.loads(_wraw) if _wraw else []
+        if isinstance(_wl, list):
+            for _w in _wl:
+                if isinstance(_w, (list, tuple)) and len(_w) == 2:
+                    _wf = _self_hhmm(str(_w[0] or ""))
+                    _wt = _self_hhmm(str(_w[1] or ""))
+                    if _wf or _wt:
+                        _wins.append((_wf, _wt))
+    except Exception:
+        _wins = []
+    if not _wins:
+        _wf = _self_hhmm(setting("self_status_from" + _sfx, str))
+        _wt = _self_hhmm(setting("self_status_to" + _sfx, str))
+        if _wf or _wt:
+            _wins.append((_wf, _wt))
+    if _wins:
         _now = dt.datetime.now().strftime("%H:%M")
-        _in = True
-        if _wfrom and _wto:
-            _in = (_wfrom <= _now <= _wto) if _wfrom <= _wto else (_now >= _wfrom or _now <= _wto)
-        elif _wfrom:
-            _in = _now >= _wfrom
-        elif _wto:
-            _in = _now <= _wto
-        if not _in:
-            _win = (_wfrom + " to " + _wto) if (_wfrom and _wto) else ("after " + _wfrom if _wfrom else "before " + _wto)
-            return False, "You can only change your own status " + _win + ". Message dispatch."
+        def _w_in(_wf, _wt):
+            if _wf and _wt:
+                return (_wf <= _now <= _wt) if _wf <= _wt else (_now >= _wf or _now <= _wt)
+            if _wf:
+                return _now >= _wf
+            return _now <= _wt
+        if not any(_w_in(_wf, _wt) for (_wf, _wt) in _wins):
+            _parts = []
+            for (_wf, _wt) in _wins:
+                _parts.append((_wf + " to " + _wt) if (_wf and _wt) else ("after " + _wf if _wf else "before " + _wt))
+            return False, "You can only change your own status " + " or ".join(_parts) + ". Message dispatch."
     if want in ("break", "offline"):
         try:
             _min = int(setting("self_status_min" + _sfx, int) or 0)

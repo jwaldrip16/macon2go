@@ -333,7 +333,12 @@ rsLoad();
     alerts and GPS keep coming in. Each device can still switch it off with the Keep screen awake button.</div>
   <h2>Driver status changes</h2>
   <input type="hidden" name="self_status_present" value="1">
-  {% macro ssfields(pfx) %}<div class="muted small" style="margin:2px 0 10px 26px">Only between <input name="self_status_from{{ pfx }}" value="{{ s.get('self_status_from' ~ pfx, '') }}" placeholder="10:00" style="width:70px"> and <input name="self_status_to{{ pfx }}" value="{{ s.get('self_status_to' ~ pfx, '') }}" placeholder="22:00" style="width:70px"> (blank = any time). Keep at least <input name="self_status_min{{ pfx }}" value="{{ s.get('self_status_min' ~ pfx, '0') }}" inputmode="numeric" style="width:44px"> drivers on shift: a driver can't take a break or clock out when that would leave fewer. 0 = no limit.</div>
+  {% macro ssfields(pfx) %}<div class="sswbox" data-pfx="{{ pfx }}" data-wins="{{ s.get('self_status_windows' ~ pfx, '') }}" data-lf="{{ s.get('self_status_from' ~ pfx, '') }}" data-lt="{{ s.get('self_status_to' ~ pfx, '') }}" style="margin:2px 0 10px 26px">
+    <div class="muted small" style="margin:0 0 4px 0">Only during these time windows (a row with both times blank is ignored; leave every row blank = any time):</div>
+    <div class="sswrows"></div>
+    <button type="button" class="sswadd" style="width:auto;padding:0 10px;margin:0 0 8px 0">Add another window</button>
+    <div class="muted small">Keep at least <input name="self_status_min{{ pfx }}" value="{{ s.get('self_status_min' ~ pfx, '0') }}" inputmode="numeric" style="width:44px"> drivers on shift: a driver can't take a break or clock out when that would leave fewer. 0 = no limit.</div>
+  </div>
 {% endmacro %}  <label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input type="checkbox" name="self_status" value="1" {{ 'checked' if s.get('self_status','0') == '1' else '' }} style="width:auto"> {% if brands_on %}Tiger Town To Go (the main business): let drivers put themselves online, on break, or offline{% else %}Let drivers put themselves online, on break, or offline{% endif %}</label>
   {{ ssfields('') }}
   {% if brands_on %}{% for b in br_sites %}<label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input type="checkbox" name="self_status_{{ b.id }}" value="1" {{ 'checked' if s.get('self_status_' ~ b.id, '0') == '1' else '' }} style="width:auto"> {{ b.name }}: let drivers put themselves online, on break, or offline</label>
@@ -517,6 +522,42 @@ rsLoad();
   <p id="purgeMsg" class="small" style="margin-top:8px"></p>
 </div>
 {% endblock %}
+<script>
+(function(){
+  function sswRow(pfx, fv, tv){
+    var d = document.createElement('div');
+    d.className = 'sswrow';
+    d.style.cssText = 'display:flex;gap:6px;align-items:center;margin:0 0 4px 0';
+    var f = document.createElement('input');
+    f.name = 'self_status_from' + pfx; f.value = fv || ''; f.placeholder = '10:00'; f.style.width = '70px';
+    var mid = document.createElement('span'); mid.textContent = 'to';
+    var tt = document.createElement('input');
+    tt.name = 'self_status_to' + pfx; tt.value = tv || ''; tt.placeholder = '22:00'; tt.style.width = '70px';
+    var rm = document.createElement('button');
+    rm.type = 'button'; rm.textContent = 'Remove'; rm.style.cssText = 'width:auto;padding:0 8px';
+    rm.onclick = function(){ d.parentNode.removeChild(d); };
+    d.appendChild(f); d.appendChild(mid); d.appendChild(tt); d.appendChild(rm);
+    return d;
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.sswbox'), function(box){
+    var pfx = box.getAttribute('data-pfx');
+    var rows = box.querySelector('.sswrows');
+    var wins = [];
+    try { wins = JSON.parse(box.getAttribute('data-wins') || '[]') || []; } catch(e) { wins = []; }
+    if (!wins.length) {
+      var lf = box.getAttribute('data-lf') || '';
+      var lt = box.getAttribute('data-lt') || '';
+      if (lf || lt) wins = [[lf, lt]];
+    }
+    if (!wins.length) wins = [['', '']];
+    wins.slice(0, 8).forEach(function(w){
+      rows.appendChild(sswRow(pfx, w && w[0], w && w[1]));
+    });
+    var add = box.querySelector('.sswadd');
+    if (add) add.onclick = function(){ rows.appendChild(sswRow(pfx, '', '')); };
+  });
+})();
+</script>
 {% block scripts %}<script>attachAddressPicker('bizAddr');
 {% if owner_view and brands_on %}const BSITES = {{ sites|tojson }};
 function bsE(v){ return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }

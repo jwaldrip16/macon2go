@@ -12524,7 +12524,10 @@ def dispatch_settings():
         if "self_status_present" in request.form:
             _ssk = ["self_status"]
             if brands_on():
+                _mbs = main_business_site_ids()
                 for _st in db().execute("SELECT id FROM sites ORDER BY name").fetchall():
+                    if int(_st["id"]) in _mbs:
+                        continue
                     _ssk.append("self_status_" + str(_st["id"]))
             for _k in _ssk:
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
@@ -12720,7 +12723,7 @@ def dispatch_settings():
         if errs:
             db().commit()
             rows = db().execute("SELECT * FROM settings").fetchall()
-            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
+            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
                                    saved=False, errors=errs, bh=business_hours_rows(),
                                    bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
         if "order_tokens" in request.form:
@@ -12729,7 +12732,7 @@ def dispatch_settings():
         db().commit()
         saved = True
     rows = db().execute("SELECT * FROM settings").fetchall()
-    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
+    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
                            bh=business_hours_rows(), bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
 
 # ---------------------------------------------------------------- chat
@@ -12816,6 +12819,19 @@ def _self_hhmm(x):
     return ""
 
 
+def main_business_site_ids():
+    """Brand rows that ARE the main business: their name is the Settings business name,
+    so they share the main brand's driver settings instead of carrying their own."""
+    _mbn = "".join(ch for ch in main_brand_name().lower() if ch.isalnum()).replace("2", "to")
+    if not _mbn:
+        return set()
+    try:
+        return {int(r["id"]) for r in db().execute("SELECT id, name FROM sites").fetchall()
+                if "".join(ch for ch in str(r["name"] or "").lower() if ch.isalnum()).replace("2", "to") == _mbn}
+    except Exception:
+        return set()
+
+
 def driver_self_status_site():
     """The brand row a signed-in driver is working under, for per-brand driver settings.
     Mirrors staff_brand_site: the company the driver picked in the app, else the brand of
@@ -12847,7 +12863,8 @@ def driver_self_status_site():
 def driver_self_status_on(did=None):
     """Per-brand setting: can drivers change their own status (online/break/offline)?"""
     _s = driver_self_status_site()
-    return setting("self_status_" + str(_s["id"]) if _s is not None else "self_status", int) == 1
+    _key = ("self_status_" + str(_s["id"])) if (_s is not None and _s["id"] not in main_business_site_ids()) else "self_status"
+    return setting(_key, int) == 1
 
 
 def driver_self_set(did, want):
@@ -12863,7 +12880,7 @@ def driver_self_set(did, want):
         return False, None
     _sfx = ""
     _site = driver_self_status_site()
-    if _site is not None:
+    if _site is not None and _site["id"] not in main_business_site_ids():
         _sfx = "_" + str(_site["id"])
     _wins = []
     try:

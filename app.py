@@ -12529,6 +12529,16 @@ def dispatch_settings():
             for _k in _ssk:
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
                              (_k, "1" if request.form.get(_k) else "0"))
+                _sfx = "" if _k == "self_status" else _k[len("self_status"):]
+                for _f in ("from", "to"):
+                    db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                                 ("self_status_" + _f + _sfx, _self_hhmm(request.form.get("self_status_" + _f + _sfx))))
+                try:
+                    _mv = max(0, min(20, int(request.form.get("self_status_min" + _sfx) or 0)))
+                except ValueError:
+                    _mv = 0
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                             ("self_status_min" + _sfx, str(_mv)))
         if "future_lead_min" in request.form:
             try:
                 lm = int(request.form["future_lead_min"])
@@ -12783,6 +12793,18 @@ def api_chat_send(driver_id):
     return jsonify({"ok": True})
 
 
+def _self_hhmm(x):
+    """Accept 9:30 or 09:30, return "09:30", else empty."""
+    try:
+        _h, _m = str(x or "").strip().split(":")
+        _h, _m = int(_h), int(_m)
+        if 0 <= _h <= 23 and 0 <= _m <= 59:
+            return "%02d:%02d" % (_h, _m)
+    except (ValueError, AttributeError):
+        pass
+    return ""
+
+
 def driver_self_status_site():
     """The brand row a signed-in driver is working under, for per-brand driver settings.
     Mirrors staff_brand_site: the company the driver picked in the app, else the brand of
@@ -12828,6 +12850,35 @@ def driver_self_set(did, want):
     if not (_d["status"] in ("online", "break") or
             (_d["status"] == "offline" and driver_group(_d) == "scheduled")):
         return False, None
+    _sfx = ""
+    _site = driver_self_status_site()
+    if _site is not None:
+        _sfx = "_" + str(_site["id"])
+    _wfrom = _self_hhmm(setting("self_status_from" + _sfx, str))
+    _wto = _self_hhmm(setting("self_status_to" + _sfx, str))
+    if _wfrom or _wto:
+        _now = dt.datetime.now().strftime("%H:%M")
+        _in = True
+        if _wfrom and _wto:
+            _in = (_wfrom <= _now <= _wto) if _wfrom <= _wto else (_now >= _wfrom or _now <= _wto)
+        elif _wfrom:
+            _in = _now >= _wfrom
+        elif _wto:
+            _in = _now <= _wto
+        if not _in:
+            _win = (_wfrom + " to " + _wto) if (_wfrom and _wto) else ("after " + _wfrom if _wfrom else "before " + _wto)
+            return False, "You can only change your own status " + _win + ". Message dispatch."
+    if want in ("break", "offline"):
+        try:
+            _min = int(setting("self_status_min" + _sfx, int) or 0)
+        except (TypeError, ValueError):
+            _min = 0
+        if _min > 0:
+            _on = db().execute("SELECT COUNT(*) c FROM drivers WHERE status='online' AND id<>? AND COALESCE(active,1)=1",
+                               (did,)).fetchone()["c"]
+            if _on < _min:
+                return False, ("Dispatch wants at least " + str(_min) + " driver" + ("" if _min == 1 else "s") +
+                               " on shift, so you cannot take a break or clock out right now. Message dispatch.")
     if want == "online":
         if not business_is_open():
             return False, "The business is closed. Message dispatch when it opens and they can put you online."

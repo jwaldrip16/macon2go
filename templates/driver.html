@@ -24,6 +24,7 @@ function ordBoth(o){ const s = ordSub(o); return ordMain(o) + (s ? ' (' + s + ')
 function hEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 
 function brandLine(o){
+  if (HIDE_BRAND) return '';
   if (!o || !o.site_name) return '';
   var n = String(o.site_name).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
   var img = (o.site_logo && /^\/[\w\/.\-]+$/.test(o.site_logo)) ? '<img src="'+o.site_logo+'" alt="" style="height:18px;width:18px;object-fit:contain;vertical-align:-4px;margin-right:5px;border-radius:3px">' : '';
@@ -215,6 +216,7 @@ if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js",{scop
 // new order sound (the chime file), plays every 5 seconds until the order is accepted
 try { ffSound.setOrderSound('/static/sounds/new-order.mp3'); } catch(e) {}
 const BRAND_NAME = {{ (staff_brand.name if staff_brand else '')|tojson }};
+const HIDE_BRAND = {{ 'true' if staff_brand_hidden else 'false' }};
 try { ffSound.setSound('sent', '/static/sounds/chat.mp3'); } catch(e) {}
 try { ffSound.setSound('message', '/static/sounds/driver-message.mp3'); } catch(e) {}   // dispatch / system message to the driver   // your message reached dispatch
 let LATE_BEEP_AT = 0, LATE_LOUD = false;
@@ -358,7 +360,7 @@ function gateCheck(res, d){
   if (hasOrders) mode = '';
   else if (res.business_open === false) mode = 'closed';
   else if (res.scheduled === false && d.status === 'offline') mode = 'unscheduled';
-  const name = BRAND_NAME || res.business_name || 'Dispatch';   // the company the driver signed in under
+  const name = HIDE_BRAND ? '' : (BRAND_NAME || res.business_name || 'Dispatch');   // the company the driver signed in under
   const show = function(id, on){ const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !on); };
   const tabbar = document.querySelector('.tabbar');
   // Navigate only for drivers who are scheduled and on shift (online or on break)
@@ -368,8 +370,8 @@ function gateCheck(res, d){
     return false;
   }
   document.getElementById('gateMsg').textContent = mode === 'closed'
-    ? name + ' is closed.'
-    : name + ' does not have you scheduled.';
+    ? (HIDE_BRAND ? 'The business is closed.' : name + ' is closed.')
+    : (HIDE_BRAND ? 'The business does not have you scheduled.' : name + ' does not have you scheduled.');
   document.getElementById('gateSub').textContent = mode === 'closed'
     ? 'The app will open by itself when dispatch opens the business. Your schedule is below, and you can still send it in.'
     : 'Call dispatch or message them below to be put online. Your schedule is below, and you can still send it in.';

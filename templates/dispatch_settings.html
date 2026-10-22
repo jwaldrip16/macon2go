@@ -335,6 +335,12 @@ rsLoad();
   <input name="keep_awake_kitchen" value="{{ s['keep_awake_kitchen'] if s['keep_awake_kitchen'] is defined and s['keep_awake_kitchen'] != None else '1' }}">
   <div class="muted small">Stops phones and tablets from going to sleep while the app is open, so new orders,
     alerts and GPS keep coming in. Each device can still switch it off with the Keep screen awake button.</div>
+  <h2>Driver and restaurant apps</h2>
+  {% if owner_view %}
+  <input type="hidden" name="sb_present" value="1">
+  <label style="display:flex;gap:8px;align-items:center;font-weight:normal"><input type="checkbox" name="hide_staff_brand" value="1" {{ 'checked' if s.get('hide_staff_brand','0') == '1' else '' }} style="width:auto"> Hide the company brand in the driver and restaurant apps</label>
+  <div class="muted small">The driver and restaurant apps then show plain words instead of the company brand: the app title says Driver or Restaurant, closed and schedule notices say "The business", order cards drop the brand line, and push alerts say Delivery update.</div>
+  {% endif %}
   <h2>Driver status changes</h2>
   <input type="hidden" name="self_status_present" value="1">
   {% macro ssfields(pfx) %}<div class="sswbox" data-pfx="{{ pfx }}" data-wins="{{ s.get('self_status_windows' ~ pfx, '') }}" data-lf="{{ s.get('self_status_from' ~ pfx, '') }}" data-lt="{{ s.get('self_status_to' ~ pfx, '') }}" style="margin:2px 0 10px 26px">

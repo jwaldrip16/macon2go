@@ -5397,6 +5397,10 @@ def _inject_page_ver():
     return {"page_ver": PAGE_VER}
 
 @app.context_processor
+def _inject_staff_brand_hidden():
+    return {"staff_brand_hidden": staff_brand_hidden()}
+
+@app.context_processor
 def inject_paypal():
     return {"pp_enabled": pp_enabled(), "pp_on": pp_enabled()}
 
@@ -12335,6 +12339,9 @@ def dispatch_settings():
                 except ValueError:
                     _v = int(SA_DEFAULTS[_k])
                 db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (_k, str(_v)))
+        if "sb_present" in request.form and is_owner(session.get("dispatcher_id")):
+            db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('hide_staff_brand',?)",
+                         ("1" if request.form.get("hide_staff_brand") else "0",))
         if "pp_present" in request.form and is_owner(session.get("dispatcher_id")):
             _cur = _pp_settings()
             _new = dict(_cur)
@@ -14892,6 +14899,15 @@ def vapid_keys():
     return pub_b64, priv_b64
 
 
+def staff_brand_hidden():
+    """Settings: hide the company brand inside the driver and restaurant apps."""
+    try:
+        r = db().execute("SELECT value FROM settings WHERE key='hide_staff_brand'").fetchone()
+        return bool(r and r["value"] == "1")
+    except Exception:
+        return False
+
+
 def ffpush(role, who, title, body, tag=None, url=None):
     """Send a push to every phone registered for this role + owner. Never raises."""
     if not who or not body:
@@ -14911,7 +14927,10 @@ def ffpush(role, who, title, body, tag=None, url=None):
         _, priv = vapid_keys()
     except Exception:
         return 0
-    payload = json.dumps({"title": title or "Fleet Foot Delivery", "body": body,
+    _t = title or "Fleet Foot Delivery"
+    if staff_brand_hidden():
+        _t = "Delivery update"
+    payload = json.dumps({"title": _t, "body": body,
                           "tag": tag or "", "url": url or "/", "icon": PUSH_ICON.get(role)})
     sent = 0
     last_err = ""

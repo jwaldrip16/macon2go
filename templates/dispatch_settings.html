@@ -335,6 +335,16 @@ rsLoad();
   <input name="keep_awake_kitchen" value="{{ s['keep_awake_kitchen'] if s['keep_awake_kitchen'] is defined and s['keep_awake_kitchen'] != None else '1' }}">
   <div class="muted small">Stops phones and tablets from going to sleep while the app is open, so new orders,
     alerts and GPS keep coming in. Each device can still switch it off with the Keep screen awake button.</div>
+  <h2>Time zone</h2>
+  {% if owner_view %}
+  <input type="hidden" name="tzz_present" value="1">
+  <label>The company's time zone (hours, order times and schedules)</label>
+  <select name="company_tz">
+    <option value="">Default (the setting on Railway)</option>
+    {% for v, l in tz_choices %}<option value="{{ v }}" {{ 'selected' if s.get('company_tz','') == v else '' }}>{{ l }}</option>{% endfor %}
+  </select>
+  <div class="muted small">Set this for each new company right after it joins. Times already saved keep their clock reading; only the zone they show in changes.</div>
+  {% endif %}
   <h2>Driver and restaurant apps</h2>
   {% if owner_view %}
   <input type="hidden" name="sb_present" value="1">

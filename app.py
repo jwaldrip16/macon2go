@@ -29,6 +29,7 @@ def set_app_tz(name):
 
 APP_TZ = _pick_tz()
 set_app_tz(APP_TZ)
+ENV_APP_TZ = APP_TZ   # the zone Railway gave us, before any Settings pick
 
 # Each region can run on its own time zone (Athens GA on Eastern while Opelika stays Central).
 # Every stamp is still saved in APP_TZ; a region's hours, scheduled times and the times shown
@@ -2242,7 +2243,7 @@ def rail_off(sid):
 
 
 RAIL_OPEN_PREFIXES = (SUSPEND_OPEN_PREFIXES + _STAFF_PREFIXES +
-                  ("/api/chat/", "/api/push/", "/api/order/", "/api/regions"))
+                  ("/companies", "/api/chat/", "/api/push/", "/api/order/", "/api/regions"))
 
 
 def rail_guard():
@@ -8616,7 +8617,7 @@ FRESH_TABLES = ["active_time", "applications", "availability", "blocked_customer
                 "restaurants", "revgeo", "reviews", "saved_cards", "sites", "staff_resets", "status_log",
                 "time_off", "week_submissions"]
 # settings kept through a wipe: sign-in security and the developer test switch
-FRESH_KEEP_SETTINGS = ("auto_secret_key", "dev_all_brands", "dev_perm", "platform_role")
+FRESH_KEEP_SETTINGS = ("auto_secret_key", "dev_all_brands", "dev_perm", "platform_role", "company_tz")
 
 
 def platform_host():
@@ -11449,6 +11450,26 @@ def api_software_check():
     return jsonify(out)
 
 
+@app.get("/companies")
+def companies_page():
+    """Public page: the companies on this platform, with Edit links for signed-in owners."""
+    rows = []
+    try:
+        for x in db().execute("SELECT id,name,logo,phone,domains FROM sites ORDER BY sort, id").fetchall():
+            doms = [d.strip().replace("https://", "").replace("http://", "").strip("/").lower()
+                    for d in (x["domains"] or "").split(",") if d.strip()]
+            rows.append({"id": x["id"], "name": x["name"], "logo": x["logo"] or "",
+                         "phone": x["phone"] or "", "url": ("https://" + doms[0]) if doms else ""})
+    except Exception:
+        rows = []
+    try:
+        can_edit = bool(dispatcher_required() and (is_owner(session.get("dispatcher_id")) or is_dev()))
+    except Exception:
+        can_edit = False
+    return render_template("companies.html", companies=rows, can_edit=can_edit,
+                           is_platform=(platform_role() != "separate"))
+
+
 @app.get("/api/dispatch/regions")
 def api_regions():
     if not dispatcher_required():
@@ -12312,6 +12333,7 @@ def dispatch_menu(rid):
 
 @app.route("/dispatch/settings", methods=["GET", "POST"])
 def dispatch_settings():
+    global APP_TZ
     if not dispatcher_required():
         return redirect(url_for("dispatch_login"))
     saved = False
@@ -12342,6 +12364,15 @@ def dispatch_settings():
         if "sb_present" in request.form and is_owner(session.get("dispatcher_id")):
             db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('hide_staff_brand',?)",
                          ("1" if request.form.get("hide_staff_brand") else "0",))
+        if "tzz_present" in request.form and is_owner(session.get("dispatcher_id")):
+            _tz = (request.form.get("company_tz") or "").strip()
+            if _tz and _tz in dict(TZ_CHOICES):
+                db().execute("INSERT OR REPLACE INTO settings(key,value) VALUES('company_tz',?)", (_tz,))
+                APP_TZ = set_app_tz(_tz)
+                log("settings", "company time zone set to " + _tz)
+            else:
+                db().execute("DELETE FROM settings WHERE key='company_tz'")
+                APP_TZ = set_app_tz(ENV_APP_TZ)
         if "pp_present" in request.form and is_owner(session.get("dispatcher_id")):
             _cur = _pp_settings()
             _new = dict(_cur)
@@ -12801,7 +12832,7 @@ def dispatch_settings():
         if errs:
             db().commit()
             rows = db().execute("SELECT * FROM settings").fetchall()
-            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
+            return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), tz_choices=TZ_CHOICES, owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows},
                                    saved=False, errors=errs, bh=business_hours_rows(),
                                    bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
         if "order_tokens" in request.form:
@@ -12810,7 +12841,7 @@ def dispatch_settings():
         db().commit()
         saved = True
     rows = db().execute("SELECT * FROM settings").fetchall()
-    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
+    return render_template("dispatch_settings.html", pp=pp_settings_view(), pp_msgs=pp_msgs, br=br_settings_view(), br_msgs=br_msgs, br_sites=[dict(id=x["id"], name=x["name"]) for x in db().execute("SELECT id, name FROM sites ORDER BY name").fetchall()] if brands_on() else [], ss_main=sorted(main_business_site_ids()), sites=sites_view() if brands_on() else [], auto_msgs=AUTO_MSGS, am_on=auto_msg_on, dev_am=DEV_AUTO_MSGS, dev_view=is_dev(), tz_choices=TZ_CHOICES, owner_view=is_owner(session.get("dispatcher_id")), co=self_company_entry() if is_owner(session.get("dispatcher_id")) else None, site=site_text(raw=True), s={r["key"]: r["value"] for r in rows}, saved=saved,
                            bh=business_hours_rows(), bh_on=bool(business_hours()), any_on=any_rest_on(), any_row=any_rest_row(), bh_days=BH_DAYS)
 
 # ---------------------------------------------------------------- chat
@@ -17115,6 +17146,16 @@ def healthz():
     return jsonify({"ok": True, "time": now()})
 
 init_db()
+# The company time zone saved in Dispatch Settings wins over the APP_TZ environment variable.
+try:
+    _con = sqlite3.connect(DB_PATH)
+    _con.row_factory = sqlite3.Row
+    _r = _con.execute("SELECT value FROM settings WHERE key='company_tz'").fetchone()
+    _con.close()
+    if _r and _r["value"] and _r["value"] in dict(TZ_CHOICES):
+        APP_TZ = set_app_tz(_r["value"])
+except Exception:
+    pass
 
 
 _DD_PHONE = "8644257155"   # the ordering platform's own support line, copied by mistake from old sites

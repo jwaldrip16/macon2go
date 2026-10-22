@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Our companies{% endblock %}
+{% block body %}
+{% if is_platform %}<div class="head"><h1>Our companies</h1></div>{% else %}<div class="head"><h1>Our company</h1></div>{% endif %}
+{% if not is_platform %}
+<div class="panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+  {% if logo_url %}<img src="{{ logo_url }}" alt="" style="height:44px;max-width:120px;object-fit:contain">{% endif %}
+  <div style="flex:1;min-width:180px"><b>{{ biz_name }}</b>{% if biz_phone %}<div class="muted small">{{ biz_phone }}</div>{% endif %}</div>
+  {% if can_edit %}<a class="btn small" href="/dispatch/settings">Edit</a>{% endif %}
+</div>
+{% elif companies %}
+{% for c in companies %}
+<div class="panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+  {% if c.logo %}<img src="{{ c.logo }}" alt="" style="height:44px;max-width:120px;object-fit:contain">{% endif %}
+  <div style="flex:1;min-width:180px"><b>{{ c.name }}</b>{% if c.phone %}<div class="muted small">{{ c.phone }}</div>{% endif %}</div>
+  {% if c.url %}<a class="btn small" href="{{ c.url }}" target="_blank" rel="noopener">Visit site</a>{% endif %}
+  {% if can_edit %}<a class="btn small" href="/dispatch/regions" title="Opens the Regions page, Brand sites">Edit</a>{% endif %}
+</div>
+{% endfor %}
+{% else %}
+<div class="panel muted">Companies are added in the Regions page under Brand sites.</div>
+{% endif %}
+{% endblock %}

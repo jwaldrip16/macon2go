@@ -14709,10 +14709,20 @@ def brand_icon(size):
 
 
 # --- phone apps (Google Play / App Store via PWABuilder) ---------------------
-# Each app has its own install manifest. Names follow the business name in Settings,
+# Each app has its own install manifest. The customer and tracker apps follow the business
+# name in Settings; the driver and restaurant apps follow the brand of the web address they
+# were installed from (then the business name, or a plain word when hide-the-brand is on),
 # so every client's copy shows its own brand. Enter these links in PWABuilder:
 #   customer  https://<domain>/          driver  https://<domain>/driver
 #   kitchen   https://<domain>/restaurant
+def _short_name(s):
+    """Home-screen label: the name itself, or its last full word that fits 12 characters."""
+    s = (s or "").strip()
+    if len(s) <= 12:
+        return s
+    return (s[:12].rsplit(" ", 1)[0] or s[:12])
+
+
 APP_MANIFESTS = {
     "customer": {"suffix": "", "short": None, "start": "/", "scope": "/", "orientation": "portrait",
                  "bg": "#ffffff", "theme": "#e53935",
@@ -14745,8 +14755,25 @@ def app_manifest(which):
         biz = (setting("business_name", str) or "Fleet Foot Delivery").strip() or "Fleet Foot Delivery"
     except Exception:
         biz = "Fleet Foot Delivery"
-    name = m.get("name") or (biz + m["suffix"])[:45]
-    short = m["short"] or (biz if len(biz) <= 12 else biz.split()[0][:12])
+    base = biz
+    if which in ("driver", "kitchen"):
+        # the app a company's staff installs carries that company's own name:
+        # the brand of the web address it was installed from, then the business
+        # name in Settings; with hide-the-brand on it is a plain word.
+        try:
+            _s = host_site()
+            if _s is not None and (_s["name"] or "").strip():
+                base = _s["name"].strip()
+        except Exception:
+            pass
+        if staff_brand_hidden():
+            base = ""
+    if which in ("driver", "kitchen"):
+        name = (base + m["suffix"])[:45] if base else ("Driver" if which == "driver" else "Restaurant")
+        short = _short_name(base) if base else name
+    else:
+        name = m.get("name") or (base + m["suffix"])[:45]
+        short = m["short"] or _short_name(base)
     if which in ("driver", "hub-driver", "kitchen", "hub-kitchen"):
         # the staff apps are Fleet Foot Delivery's own: always its logo, never a client brand's
         _ic = "driver" if "driver" in which else "kitchen"
